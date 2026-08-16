@@ -71,9 +71,50 @@ export async function searchPriceHistory(searchPatterns = []) {
         }
       }
 
-      if (results.length >= 5) break;
+      if (results.length >= 6) break;
     } catch (err) {
       console.warn(`[Supabase Service] Search error for term '${term}':`, err.message);
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Searches card_images table for matching cards
+ */
+export async function searchCardImages(searchPatterns = []) {
+  if (!searchPatterns || searchPatterns.length === 0) return [];
+
+  const results = [];
+  const seen = new Set();
+
+  for (const term of searchPatterns) {
+    if (!term || term.length < 2) continue;
+    const sanitized = term.replace(/[\/\\%_]/g, '');
+    const encodedTerm = encodeURIComponent(`%${term}%`);
+    const encodedSanitized = encodeURIComponent(`%${sanitized}%`);
+
+    try {
+      const query = {
+        select: 'card_id,image_url',
+        or: `(card_id.ilike.${encodedTerm},card_id.ilike.${encodedSanitized})`,
+        limit: '10'
+      };
+
+      const rows = await supabaseFetch('card_images', query);
+      if (rows && rows.length > 0) {
+        for (const r of rows) {
+          if (r.card_id && !seen.has(r.card_id)) {
+            seen.add(r.card_id);
+            results.push(r);
+          }
+        }
+      }
+
+      if (results.length >= 6) break;
+    } catch (err) {
+      console.warn(`[Supabase Service] Image search error for '${term}':`, err.message);
     }
   }
 
@@ -121,7 +162,7 @@ export async function fetchCardImages(cardIds = []) {
  */
 export function parseCardDetailsFromId(cardId) {
   if (!cardId || typeof cardId !== 'string') {
-    return { name: 'Pokémon Karte', setName: 'Unbekanntes Set', number: '000', rarity: 'Rare' };
+    return { name: 'Pokémon Karte', setName: 'Pokémon TCG', number: '000', rarity: 'Rare' };
   }
 
   const clean = decodeURIComponent(cardId).replace(/^\/+/, '');
@@ -140,7 +181,7 @@ export function parseCardDetailsFromId(cardId) {
   // Extract name & number from filename/slug
   let name = cardPart.replace(/[-_]/g, ' ').trim();
   
-  // Extract number (e.g. 216 or 025 or TG04)
+  // Extract number (e.g. 216 or 025 or TG04 or 170)
   const numMatch = name.match(/(\b\d{1,3}\b|\bTG\d{1,2}\b|\bGG\d{1,2}\b|\bSVP\s*\d{1,3}\b)/i);
   const number = numMatch ? numMatch[1] : '';
 
@@ -149,6 +190,7 @@ export function parseCardDetailsFromId(cardId) {
   if (name.includes('SIR') || name.includes('Special Illustration')) rarity = 'SIR';
   else if (name.includes('UR') || name.includes('Ultra Rare')) rarity = 'UR';
   else if (name.includes('RR') || name.includes('Double Rare')) rarity = 'RR';
+  else if (name.includes('AR') || name.includes('Art Rare')) rarity = 'Art Rare';
   else if (name.includes('Holo')) rarity = 'Holo Rare';
 
   // Clean title

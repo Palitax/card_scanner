@@ -16,7 +16,8 @@ class CardScannerOverlay {
       scanCount: 0,
       currency: 'EUR',
       currencySymbol: '€',
-      activeCard: null
+      activeCard: null,
+      lastScanMeta: null
     };
     this.onCaptureClick = null;
     this.onManualSearch = null;
@@ -28,21 +29,17 @@ class CardScannerOverlay {
       return;
     }
 
-    // 1. Create Host Container in Host DOM
     this.host = document.createElement('div');
     this.host.id = 'cardscanner-root';
     document.body.appendChild(this.host);
 
-    // 2. Attach Closed/Open Shadow Root for style isolation
     this.shadow = this.host.attachShadow({ mode: 'open' });
 
-    // 3. Inject Stylesheet Link
     const styleLink = document.createElement('link');
     styleLink.rel = 'stylesheet';
     styleLink.href = chrome.runtime.getURL('content/overlay.css');
     this.shadow.appendChild(styleLink);
 
-    // 4. Create Main Wrapper
     this.container = document.createElement('div');
     this.container.className = 'cs-sidebar';
     this.shadow.appendChild(this.container);
@@ -74,7 +71,7 @@ class CardScannerOverlay {
     this.container.className = 'cs-sidebar';
     this.container.onclick = null;
 
-    const { isLoading, candidates, selectedIndex, scanCount, activeCard } = this.state;
+    const { isLoading, candidates, selectedIndex, scanCount, activeCard, lastScanMeta } = this.state;
     const currentCard = activeCard || (candidates && candidates[selectedIndex]) || null;
 
     let bodyContent = '';
@@ -88,26 +85,23 @@ class CardScannerOverlay {
         </div>
       `;
     } else if (currentCard) {
-      // Active Hero Card Details
       const imgUrl = currentCard.image_url || chrome.runtime.getURL('icons/icon-128.png');
       const lang = (currentCard.language || 'EN').toUpperCase();
       const matchScore = currentCard.match_score || 99;
       const title = currentCard.name || 'Pokémon Karte';
-      const subtitle = `${currentCard.set_name || 'Set'} • #${currentCard.number || '000'}`;
+      const subtitle = `${currentCard.set_name || 'Set'} • #${currentCard.number || ''}`;
       const rarity = currentCard.rarity || 'Ultra Rare';
       
-      const priceTrend = currentCard.price_trend || currentCard.price || 3.85;
-      const pricePSA10 = currentCard.price_psa10 || (priceTrend * 12.0).toFixed(2);
-      const pricePSA9 = currentCard.price_psa9 || (priceTrend * 4.5).toFixed(2);
+      const priceTrend = currentCard.price_trend;
+      const pricePSA10 = currentCard.price_psa10;
+      const pricePSA9 = currentCard.price_psa9;
 
-      // Conditions NM -> DM
-      const condNM = this.formatPrice(priceTrend);
-      const condLP = this.formatPrice(priceTrend * 0.8);
-      const condMP = this.formatPrice(priceTrend * 0.6);
-      const condHP = this.formatPrice(priceTrend * 0.4);
-      const condDM = this.formatPrice(priceTrend * 0.2);
+      const condNM = priceTrend ? this.formatPrice(priceTrend) : '-';
+      const condLP = priceTrend ? this.formatPrice(priceTrend * 0.8) : '-';
+      const condMP = priceTrend ? this.formatPrice(priceTrend * 0.6) : '-';
+      const condHP = priceTrend ? this.formatPrice(priceTrend * 0.4) : '-';
+      const condDM = priceTrend ? this.formatPrice(priceTrend * 0.2) : '-';
 
-      // Candidate picker items
       const candidateListHtml = (candidates || []).map((cand, idx) => {
         const isSel = idx === selectedIndex ? 'cs-selected' : '';
         const cImg = cand.image_url || imgUrl;
@@ -122,7 +116,6 @@ class CardScannerOverlay {
         `;
       }).join('');
 
-      // Cardmarket URL
       const cardmarketUrl = currentCard.cardmarket_url 
         ? (currentCard.cardmarket_url.startsWith('http') ? currentCard.cardmarket_url : `https://www.cardmarket.com${currentCard.cardmarket_url}`)
         : `https://www.cardmarket.com/de/Pokemon/Products/Search?searchString=${encodeURIComponent(currentCard.name || '')}`;
@@ -145,11 +138,12 @@ class CardScannerOverlay {
               </div>
             </div>
             <div class="cs-price-hero">
-              <span class="cs-price-val">${this.formatPrice(priceTrend)}</span>
+              <span class="cs-price-val">${priceTrend ? this.formatPrice(priceTrend) : 'Preise laden...'}</span>
+              ${pricePSA10 ? `
               <div class="cs-price-psa-wrap">
                 <span class="cs-psa-tag">PSA 10 <span>${this.formatPrice(pricePSA10)}</span></span>
                 <span class="cs-psa-tag">PSA 9 <span>${this.formatPrice(pricePSA9)}</span></span>
-              </div>
+              </div>` : ''}
             </div>
           </div>
         </div>
@@ -192,34 +186,54 @@ class CardScannerOverlay {
           </div>
         </div>
 
-        <!-- Sold & Market Deal Comparison -->
+        ${priceTrend ? `
+        <!-- Deal Bar -->
         <div class="cs-deal-bar">
           <div class="cs-sold-badge">
-            <span class="cs-sold-price">${this.formatPrice(priceTrend * 1.8)}</span>
-            <span class="cs-sold-label">SOLD</span>
+            <span class="cs-sold-price">${this.formatPrice(priceTrend * 1.5)}</span>
+            <span class="cs-sold-label">WHATNOT</span>
           </div>
           <div class="cs-deal-pill cs-deal-overpaying">
             <span>mkt ${this.formatPrice(priceTrend)}</span>
-            <span>↑80% Overpaying</span>
+            <span>Cardmarket Trend</span>
           </div>
-        </div>
+        </div>` : ''}
 
-        <!-- Direct Cardmarket Action -->
         <a href="${cardmarketUrl}" target="_blank" rel="noopener noreferrer" class="cs-btn-cardmarket">
           Auf Cardmarket öffnen ↗
         </a>
       `;
     } else {
       // Empty / Fallback State
+      const detectedText = lastScanMeta && lastScanMeta.rawText ? lastScanMeta.rawText : null;
+      const detectedCode = lastScanMeta && lastScanMeta.detectedCode ? lastScanMeta.detectedCode : null;
+      const thumb = lastScanMeta && lastScanMeta.capturedThumbnail ? lastScanMeta.capturedThumbnail : null;
+
+      const cmSearchUrl = detectedCode || detectedText
+        ? `https://www.cardmarket.com/de/Pokemon/Products/Search?searchString=${encodeURIComponent(detectedCode || detectedText)}`
+        : 'https://www.cardmarket.com/de/Pokemon';
+
       bodyContent = `
-        <div style="text-align: center; padding: 24px 10px; color: #94a3b8;">
-          <div style="font-size: 32px; margin-bottom: 8px;">📷</div>
-          <h3 style="color: #f8fafc; font-size: 14px; margin-bottom: 4px;">Bereit zum Scannen</h3>
-          <p style="font-size: 12px; line-height: 1.4; margin-bottom: 12px;">
-            Drücke <b style="color:#818cf8;">S</b> im Livestream oder nutze die Suche oben.
+        <div style="text-align: center; padding: 14px 6px; color: #94a3b8;">
+          ${thumb ? `
+            <div style="margin-bottom: 10px;">
+              <span style="font-size: 11px; color: #818cf8; display: block; margin-bottom: 4px;">Gescannter Stream-Bereich:</span>
+              <img src="${thumb}" style="max-width: 100%; max-height: 100px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); object-fit: contain; background: #000;" />
+            </div>
+          ` : `
+            <div style="font-size: 28px; margin-bottom: 6px;">📷</div>
+          `}
+          
+          <h3 style="color: #f8fafc; font-size: 13px; margin-bottom: 4px;">
+            ${detectedCode ? `Erkannt: "${detectedCode}"` : 'Bereit zum Scannen'}
+          </h3>
+          
+          <p style="font-size: 12px; line-height: 1.4; margin-bottom: 12px; color: #94a3b8;">
+            ${detectedCode ? 'Keine exakte Karte in der DB gefunden.' : 'Halte eine Karte vor die Kamera und drücke <b style="color:#818cf8;">S</b>.'}
           </p>
-          <a href="https://www.cardmarket.com/de/Pokemon" target="_blank" class="cs-btn-cardmarket" style="max-width:200px;margin:0 auto;">
-            Cardmarket Suche ↗
+          
+          <a href="${cmSearchUrl}" target="_blank" class="cs-btn-cardmarket" style="max-width:240px; margin: 0 auto;">
+            🔍 Direkt auf Cardmarket suchen ↗
           </a>
         </div>
       `;
@@ -258,7 +272,7 @@ class CardScannerOverlay {
           <div class="cs-footer-bar">
             <div class="cs-footer-bar-inner"></div>
           </div>
-          <span>${scanCount || 1} Scans</span>
+          <span>${scanCount || 0} Scans</span>
         </div>
         <span>Card Scanner+</span>
       </div>
@@ -268,7 +282,6 @@ class CardScannerOverlay {
   }
 
   bindEvents() {
-    // Capture Button Click
     const btnCap = this.shadow.getElementById('cs-btn-capture');
     if (btnCap) {
       btnCap.onclick = (e) => {
@@ -277,7 +290,6 @@ class CardScannerOverlay {
       };
     }
 
-    // Collapse Button Click
     const btnCol = this.shadow.getElementById('cs-btn-collapse');
     if (btnCol) {
       btnCol.onclick = (e) => {
@@ -286,7 +298,6 @@ class CardScannerOverlay {
       };
     }
 
-    // Candidate item clicks
     const candItems = this.shadow.querySelectorAll('.cs-cand-item[data-index]');
     candItems.forEach(el => {
       el.onclick = () => {
@@ -295,7 +306,6 @@ class CardScannerOverlay {
       };
     });
 
-    // None candidate button click
     const btnNone = this.shadow.getElementById('cs-btn-none');
     if (btnNone) {
       btnNone.onclick = () => {
@@ -305,7 +315,6 @@ class CardScannerOverlay {
       };
     }
 
-    // Search Input Enter
     const searchInp = this.shadow.getElementById('cs-search-input');
     if (searchInp) {
       searchInp.onkeydown = (e) => {
@@ -326,11 +335,12 @@ class CardScannerOverlay {
     this.render();
   }
 
-  showCandidates(candidates, selectedIndex = 0) {
+  showCandidates(candidates, selectedIndex = 0, scanMeta = null) {
     this.state.isLoading = false;
     this.state.candidates = candidates || [];
     this.state.selectedIndex = selectedIndex;
     this.state.activeCard = (candidates && candidates[selectedIndex]) ? candidates[selectedIndex] : null;
+    this.state.lastScanMeta = scanMeta || null;
     this.render();
   }
 
@@ -348,5 +358,4 @@ class CardScannerOverlay {
   }
 }
 
-// Attach singleton to window
 window.cardScannerOverlay = new CardScannerOverlay();
