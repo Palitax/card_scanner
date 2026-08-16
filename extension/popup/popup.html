@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Card Scanner+ Einstellungen</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <div class="popup-container">
+    <header class="popup-header">
+      <div class="brand">
+        <img src="../icons/icon-48.png" alt="Logo" class="logo" />
+        <div>
+          <h1>Card Scanner+</h1>
+          <span class="badge-v3">Whatnot Edition</span>
+        </div>
+      </div>
+    </header>
+
+    <main class="popup-body">
+      <div class="form-group">
+        <label for="backendUrl">Backend API Server (Vercel / Local)</label>
+        <input type="text" id="backendUrl" placeholder="http://localhost:3001 oder https://...vercel.app" />
+        <small>URL zu deinem Vercel Serverless Backend oder lokalen Server</small>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group flex-1">
+          <label for="hotkey">Scan Hotkey</label>
+          <select id="hotkey">
+            <option value="s">Taste 'S' (Standard)</option>
+            <option value=" ">Leertaste (Space)</option>
+            <option value="c">Taste 'C' (Capture)</option>
+            <option value="x">Taste 'X'</option>
+          </select>
+        </div>
+
+        <div class="form-group flex-1">
+          <label for="currency">Währung</label>
+          <select id="currency">
+            <option value="EUR">€ EUR</option>
+            <option value="GBP">£ GBP</option>
+            <option value="USD">$ USD</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="status-box" id="statusBox">
+        <span class="status-indicator" id="statusDot"></span>
+        <span id="statusText">Bereit</span>
+      </div>
+
+      <button id="btnSave" class="btn-primary">Einstellungen Speichern</button>
+      <button id="btnTest" class="btn-secondary">Backend-Verbindung Prüfen</button>
+    </main>
+
+    <footer class="popup-footer">
+      <span>Öffne einen <a href="https://www.whatnot.com/live" target="_blank">Whatnot Livestream</a></span>
+    </footer>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
