@@ -1,11 +1,10 @@
 /**
- * Card Scanner+ Universal Card Viewfinder & Reticle Tracker
- * Attaches to live stream video OR anywhere on page (Pre-Bids, Scheduled Streams, Listing Photos)
+ * Card Scanner+ Universal Viewfinder & Smart Image Snapper
+ * Fixed full-screen overlay (never trapped in sub-containers) with Auto-Snap to open product images
  */
 
 class CardTracker {
   constructor() {
-    this.targetElement = null;
     this.container = null;
     this.trackingBox = null;
     this.isDragging = false;
@@ -13,29 +12,28 @@ class CardTracker {
     this.dragStart = { x: 0, y: 0 };
     this.boxStart = { left: 0, top: 0, width: 0, height: 0 };
 
-    // Standard snug card dimensions (centered, optimal trading card aspect 1 : 1.40)
-    this.box = { left: 0.20, top: 0.18, width: 0.55, height: 0.55 };
+    // Standard centered card dimensions in viewport coordinates (px)
+    this.pos = {
+      left: Math.round(window.innerWidth * 0.35),
+      top: Math.round(window.innerHeight * 0.18),
+      width: 320,
+      height: 448
+    };
 
-    // Load saved custom position if user adjusted it
-    chrome.storage.local.get('cardViewfinderBox', (data) => {
-      if (data && data.cardViewfinderBox) {
-        this.box = data.cardViewfinderBox;
+    // Load saved position
+    chrome.storage.local.get('cardViewfinderPos', (data) => {
+      if (data && data.cardViewfinderPos) {
+        this.pos = data.cardViewfinderPos;
         this.applyBoxStyle();
       }
     });
+
+    this.init();
   }
 
-  init(targetElement = null) {
-    const el = targetElement || document.querySelector('video') || document.querySelector('[class*="streamContainer"]') || document.body;
-    if (!el) return;
-
-    this.targetElement = el;
-
-    if (this.targetElement.tagName === 'VIDEO') {
-      try { this.targetElement.crossOrigin = 'anonymous'; } catch (e) {}
-    }
-
+  init() {
     this.createTrackingUI();
+    this.observeOpenImages();
   }
 
   createTrackingUI() {
@@ -43,40 +41,18 @@ class CardTracker {
       return;
     }
 
-    let parent = (this.targetElement && this.targetElement.parentElement && this.targetElement !== document.body) 
-      ? this.targetElement.parentElement 
-      : document.body;
-
-    if (parent !== document.body && getComputedStyle(parent).position === 'static') {
-      parent.style.position = 'relative';
-    }
-
     this.container = document.createElement('div');
     this.container.id = 'cardscanner-tracker-layer';
-    
-    if (parent === document.body) {
-      this.container.style.cssText = `
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100vw;
-        height: 100vh;
-        pointer-events: none;
-        z-index: 9998;
-        overflow: hidden;
-      `;
-    } else {
-      this.container.style.cssText = `
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        pointer-events: none;
-        z-index: 9998;
-        overflow: hidden;
-      `;
-    }
+    this.container.style.cssText = `
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      pointer-events: none;
+      z-index: 9998;
+      overflow: hidden;
+    `;
 
     // High-Precision Glowing Framing Box
     this.trackingBox = document.createElement('div');
@@ -102,11 +78,11 @@ class CardTracker {
       <div style="display: flex; justify-content: space-between; align-items: center; pointer-events: none;">
         <span style="background: rgba(15, 23, 42, 0.92); color: #34d399; font-family: sans-serif; font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 4px; border: 1px solid rgba(52,211,153,0.4); display: flex; align-items: center; gap: 4px; backdrop-filter: blur(6px);">
           <span style="display:inline-block; width:6px; height:6px; background:#34d399; border-radius:50%; box-shadow: 0 0 6px #34d399;"></span>
-          ⚡ KARTEN-SCANNER
+          ⚡ KARTEN-ZIEL
         </span>
-        <span style="background: rgba(15, 23, 42, 0.85); color: #cbd5e1; font-family: sans-serif; font-size: 9px; font-weight: 600; padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.1);">
-          Ziehen ✥
-        </span>
+        <button id="cs-btn-snap-img" style="pointer-events: auto; background: rgba(15, 23, 42, 0.85); color: #cbd5e1; font-family: sans-serif; font-size: 9px; font-weight: 600; padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.15); cursor: pointer;" title="Automatisch auf offenes Bild einrasten">
+          🎯 Einrasten
+        </button>
       </div>
 
       <div style="display: flex; justify-content: center; pointer-events: none;">
@@ -126,43 +102,40 @@ class CardTracker {
     `;
 
     this.container.appendChild(this.trackingBox);
-    parent.appendChild(this.container);
+    document.body.appendChild(this.container);
 
     this.applyBoxStyle();
     this.bindEvents();
+
+    // Auto-snap to open image on first load
+    setTimeout(() => this.autoSnapToProminentImage(), 600);
   }
 
   applyBoxStyle() {
     if (!this.trackingBox) return;
-    this.trackingBox.style.left = `${(this.box.left * 100).toFixed(2)}%`;
-    this.trackingBox.style.top = `${(this.box.top * 100).toFixed(2)}%`;
-    this.trackingBox.style.width = `${(this.box.width * 100).toFixed(2)}%`;
-    this.trackingBox.style.height = `${(this.box.height * 100).toFixed(2)}%`;
+    this.trackingBox.style.left = `${this.pos.left}px`;
+    this.trackingBox.style.top = `${this.pos.top}px`;
+    this.trackingBox.style.width = `${this.pos.width}px`;
+    this.trackingBox.style.height = `${this.pos.height}px`;
   }
 
   bindEvents() {
-    if (!this.trackingBox || !this.container) return;
+    if (!this.trackingBox) return;
 
     this.trackingBox.addEventListener('mousedown', (e) => {
       if (e.target.closest('.cs-box-resize-handle')) {
         this.isResizing = true;
+      } else if (e.target.id === 'cs-btn-snap-img') {
+        this.autoSnapToProminentImage();
+        e.stopPropagation();
+        return;
       } else {
         this.isDragging = true;
         this.trackingBox.style.cursor = 'grabbing';
       }
 
       this.dragStart = { x: e.clientX, y: e.clientY };
-      const contRect = this.container.getBoundingClientRect();
-      const boxRect = this.trackingBox.getBoundingClientRect();
-
-      this.boxStart = {
-        left: boxRect.left - contRect.left,
-        top: boxRect.top - contRect.top,
-        width: boxRect.width,
-        height: boxRect.height,
-        contW: contRect.width || window.innerWidth,
-        contH: contRect.height || window.innerHeight
-      };
+      this.boxStart = { ...this.pos };
 
       e.preventDefault();
       e.stopPropagation();
@@ -173,21 +146,17 @@ class CardTracker {
 
       const dx = e.clientX - this.dragStart.x;
       const dy = e.clientY - this.dragStart.y;
-      const { contW, contH } = this.boxStart;
 
       if (this.isDragging) {
-        let newLeft = Math.max(0, Math.min(contW - this.boxStart.width, this.boxStart.left + dx));
-        let newTop = Math.max(0, Math.min(contH - this.boxStart.height, this.boxStart.top + dy));
-
-        this.box.left = newLeft / contW;
-        this.box.top = newTop / contH;
+        this.pos.left = Math.max(0, Math.min(window.innerWidth - this.pos.width, this.boxStart.left + dx));
+        this.pos.top = Math.max(0, Math.min(window.innerHeight - this.pos.height, this.boxStart.top + dy));
         this.applyBoxStyle();
       } else if (this.isResizing) {
-        let newW = Math.max(100, Math.min(contW - this.boxStart.left, this.boxStart.width + dx));
-        let newH = Math.min(contH - this.boxStart.top, newW * 1.40);
+        const newW = Math.max(120, Math.min(window.innerWidth - this.pos.left, this.boxStart.width + dx));
+        const newH = Math.min(window.innerHeight - this.pos.top, Math.round(newW * 1.40));
 
-        this.box.width = newW / contW;
-        this.box.height = newH / contH;
+        this.pos.width = newW;
+        this.pos.height = newH;
         this.applyBoxStyle();
       }
     });
@@ -197,9 +166,69 @@ class CardTracker {
         this.isDragging = false;
         this.isResizing = false;
         this.trackingBox.style.cursor = 'grab';
-        chrome.storage.local.set({ cardViewfinderBox: this.box });
+        chrome.storage.local.set({ cardViewfinderPos: this.pos });
       }
     });
+
+    // Snap button click
+    const btnSnap = this.trackingBox.querySelector('#cs-btn-snap-img');
+    if (btnSnap) {
+      btnSnap.onclick = (e) => {
+        e.stopPropagation();
+        this.autoSnapToProminentImage();
+      };
+    }
+  }
+
+  /**
+   * Automatically finds the largest prominent card image on screen (e.g. open Pre-Bid photo or Video)
+   */
+  autoSnapToProminentImage() {
+    const images = Array.from(document.querySelectorAll('img, video')).filter(el => {
+      if (el.closest('#cardscanner-root') || el.closest('#cardscanner-tracker-layer')) return false;
+      const rect = el.getBoundingClientRect();
+      return rect.width >= 150 && rect.height >= 180 && rect.top < window.innerHeight && rect.bottom > 0;
+    });
+
+    // Sort by area to get the most prominent card image in focus
+    images.sort((a, b) => {
+      const rA = a.getBoundingClientRect();
+      const rB = b.getBoundingClientRect();
+      return (rB.width * rB.height) - (rA.width * rA.height);
+    });
+
+    if (images.length > 0) {
+      const best = images[0];
+      const r = best.getBoundingClientRect();
+
+      this.pos = {
+        left: Math.round(r.left),
+        top: Math.round(r.top),
+        width: Math.round(r.width),
+        height: Math.round(r.height)
+      };
+
+      this.applyBoxStyle();
+      console.log('[Card Scanner+] Auto-snapped reticle to prominent card element:', best, this.pos);
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Watches for user clicking on product listing items to auto-snap onto opened photos
+   */
+  observeOpenImages() {
+    document.addEventListener('click', (e) => {
+      const target = e.target;
+      if (target.closest('#cardscanner-root') || target.closest('#cardscanner-tracker-layer')) return;
+
+      // When clicking a product or image, trigger auto-snap after modal renders
+      setTimeout(() => {
+        this.autoSnapToProminentImage();
+      }, 350);
+    }, true);
   }
 
   getTrackedCardRect() {
