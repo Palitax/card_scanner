@@ -32,10 +32,17 @@
   setTimeout(setupStreamTracker, 1000);
 
   function setupStreamTracker() {
+    if (document.getElementById('cardscanner-tracker-layer')) return;
     const video = document.querySelector('video');
-    if (video && window.cardTracker && !document.getElementById('cardscanner-tracker-layer')) {
-      window.cardTracker.init(video);
-      console.log('[Card Scanner+] Attached precision card viewfinder to stream video.');
+    const container = document.querySelector('[class*="streamContainer"]') 
+      || document.querySelector('[class*="LiveStream"]') 
+      || document.querySelector('[class*="media-container"]')
+      || document.querySelector('main') 
+      || document.body;
+
+    if (window.cardTracker) {
+      window.cardTracker.init(video || container);
+      console.log('[Card Scanner+] Attached precision card viewfinder (Universal Mode).');
     }
   }
 

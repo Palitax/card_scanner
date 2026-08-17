@@ -1,11 +1,11 @@
 /**
- * Card Scanner+ Precision Card Viewfinder & Tracker
- * Perfectly snappable, resizable & draggable framing box with Auto-Card Lock
+ * Card Scanner+ Universal Card Viewfinder & Reticle Tracker
+ * Attaches to live stream video OR anywhere on page (Pre-Bids, Scheduled Streams, Listing Photos)
  */
 
 class CardTracker {
   constructor() {
-    this.video = null;
+    this.targetElement = null;
     this.container = null;
     this.trackingBox = null;
     this.isDragging = false;
@@ -14,7 +14,7 @@ class CardTracker {
     this.boxStart = { left: 0, top: 0, width: 0, height: 0 };
 
     // Standard snug card dimensions (centered, optimal trading card aspect 1 : 1.40)
-    this.box = { left: 0.16, top: 0.20, width: 0.68, height: 0.60 };
+    this.box = { left: 0.20, top: 0.18, width: 0.55, height: 0.55 };
 
     // Load saved custom position if user adjusted it
     chrome.storage.local.get('cardViewfinderBox', (data) => {
@@ -23,16 +23,17 @@ class CardTracker {
         this.applyBoxStyle();
       }
     });
-
-    this.animationId = null;
   }
 
-  init(videoElement) {
-    if (!videoElement) return;
-    this.video = videoElement;
-    try {
-      this.video.crossOrigin = 'anonymous';
-    } catch (e) {}
+  init(targetElement = null) {
+    const el = targetElement || document.querySelector('video') || document.querySelector('[class*="streamContainer"]') || document.body;
+    if (!el) return;
+
+    this.targetElement = el;
+
+    if (this.targetElement.tagName === 'VIDEO') {
+      try { this.targetElement.crossOrigin = 'anonymous'; } catch (e) {}
+    }
 
     this.createTrackingUI();
   }
@@ -42,25 +43,40 @@ class CardTracker {
       return;
     }
 
-    const parent = this.video.parentElement;
-    if (!parent) return;
+    let parent = (this.targetElement && this.targetElement.parentElement && this.targetElement !== document.body) 
+      ? this.targetElement.parentElement 
+      : document.body;
 
-    if (getComputedStyle(parent).position === 'static') {
+    if (parent !== document.body && getComputedStyle(parent).position === 'static') {
       parent.style.position = 'relative';
     }
 
     this.container = document.createElement('div');
     this.container.id = 'cardscanner-tracker-layer';
-    this.container.style.cssText = `
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      pointer-events: none;
-      z-index: 9999;
-      overflow: hidden;
-    `;
+    
+    if (parent === document.body) {
+      this.container.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        pointer-events: none;
+        z-index: 9998;
+        overflow: hidden;
+      `;
+    } else {
+      this.container.style.cssText = `
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        z-index: 9998;
+        overflow: hidden;
+      `;
+    }
 
     // High-Precision Glowing Framing Box
     this.trackingBox = document.createElement('div');
@@ -86,10 +102,10 @@ class CardTracker {
       <div style="display: flex; justify-content: space-between; align-items: center; pointer-events: none;">
         <span style="background: rgba(15, 23, 42, 0.92); color: #34d399; font-family: sans-serif; font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 4px; border: 1px solid rgba(52,211,153,0.4); display: flex; align-items: center; gap: 4px; backdrop-filter: blur(6px);">
           <span style="display:inline-block; width:6px; height:6px; background:#34d399; border-radius:50%; box-shadow: 0 0 6px #34d399;"></span>
-          ⚡ KARTEN-ZIEL
+          ⚡ KARTEN-SCANNER
         </span>
         <span style="background: rgba(15, 23, 42, 0.85); color: #cbd5e1; font-family: sans-serif; font-size: 9px; font-weight: 600; padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.1);">
-          Ziehen zum Bewegen ✥
+          Ziehen ✥
         </span>
       </div>
 
@@ -100,7 +116,7 @@ class CardTracker {
       </div>
 
       <!-- Bottom-Right Resize Handle -->
-      <div class="cs-box-resize-handle" style="position: absolute; right: 0; bottom: 0; width: 22px; height: 22px; cursor: se-resize; pointer-events: auto; display: flex; align-items: flex-end; justify-content: flex-end; padding: 3px;">
+      <div class="cs-box-resize-handle" style="position: absolute; right: 0; bottom: 0; width: 24px; height: 24px; cursor: se-resize; pointer-events: auto; display: flex; align-items: flex-end; justify-content: flex-end; padding: 3px;">
         <svg style="width:10px; height:10px; color:#34d399;" viewBox="0 0 6 6" fill="currentColor">
           <circle cx="5" cy="5" r="1"></circle>
           <circle cx="1" cy="5" r="1"></circle>
@@ -144,8 +160,8 @@ class CardTracker {
         top: boxRect.top - contRect.top,
         width: boxRect.width,
         height: boxRect.height,
-        contW: contRect.width,
-        contH: contRect.height
+        contW: contRect.width || window.innerWidth,
+        contH: contRect.height || window.innerHeight
       };
 
       e.preventDefault();
@@ -167,8 +183,7 @@ class CardTracker {
         this.box.top = newTop / contH;
         this.applyBoxStyle();
       } else if (this.isResizing) {
-        let newW = Math.max(120, Math.min(contW - this.boxStart.left, this.boxStart.width + dx));
-        // Keep 1 : 1.40 standard trading card ratio during resize
+        let newW = Math.max(100, Math.min(contW - this.boxStart.left, this.boxStart.width + dx));
         let newH = Math.min(contH - this.boxStart.top, newW * 1.40);
 
         this.box.width = newW / contW;
