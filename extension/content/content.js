@@ -207,18 +207,41 @@ Return JSON:
     const txt = data.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!txt) return null;
 
-    const parsed = JSON.parse(txt);
-    const name = parsed.name_de || parsed.name || parsed.card_name || null;
+    const parsed = cleanJsonParse(txt);
+    if (!parsed) {
+      console.warn('[Card Scanner+] Failed to parse JSON from response text:', txt);
+      return null;
+    }
+
+    const name = parsed.name_de || parsed.card_name_de || parsed.name || parsed.card_name || parsed.title || null;
     if (!name || name === 'null') return null;
 
     return {
       name: name,
-      name_de: parsed.name_de || name,
-      set_name: parsed.set_name || 'Pokémon TCG',
-      number: parsed.number || parsed.card_number || '',
+      name_de: parsed.name_de || parsed.card_name_de || name,
+      set_name: parsed.set_name || parsed.setName || parsed.set || 'Pokémon TCG',
+      number: parsed.number || parsed.card_number || parsed.cardNumber || '',
       rarity: parsed.rarity || 'Ultra Rare',
       language: (parsed.language || 'DE').toUpperCase()
     };
+  }
+
+  function cleanJsonParse(text) {
+    if (!text || typeof text !== 'string') return null;
+    try { return JSON.parse(text.trim()); } catch (e) {}
+
+    const md = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+    if (md) {
+      try { return JSON.parse(md[1].trim()); } catch (e) {}
+    }
+
+    const firstBrace = text.indexOf('{');
+    const lastBrace = text.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+      try { return JSON.parse(text.slice(firstBrace, lastBrace + 1)); } catch (e) {}
+    }
+
+    return null;
   }
 
   /**

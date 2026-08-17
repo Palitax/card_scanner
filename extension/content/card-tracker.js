@@ -1,6 +1,6 @@
 /**
  * Card Scanner+ Universal Viewfinder & Smart Card Snapper
- * Accurately locks onto foreground card images (Aspect Ratio 1:1.40) & modal photos
+ * Accurately locks onto foreground card images, background-images & pre-bid product photos
  */
 
 class CardTracker {
@@ -15,7 +15,7 @@ class CardTracker {
     // Standard centered card dimensions in viewport coordinates (px)
     this.pos = {
       left: Math.round(window.innerWidth * 0.35),
-      top: Math.round(window.innerHeight * 0.18),
+      top: Math.round(window.innerHeight * 0.16),
       width: 320,
       height: 448
     };
@@ -71,7 +71,7 @@ class CardTracker {
       padding: 6px 8px;
       box-sizing: border-box;
       user-select: none;
-      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease, top 0.2s ease, left 0.2s ease, width 0.2s ease, height 0.2s ease;
     `;
 
     this.trackingBox.innerHTML = `
@@ -80,8 +80,8 @@ class CardTracker {
           <span style="display:inline-block; width:6px; height:6px; background:#34d399; border-radius:50%; box-shadow: 0 0 6px #34d399;"></span>
           ⚡ KARTEN-ZIEL
         </span>
-        <button id="cs-btn-snap-img" style="pointer-events: auto; background: rgba(15, 23, 42, 0.85); color: #cbd5e1; font-family: sans-serif; font-size: 9px; font-weight: 600; padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.15); cursor: pointer;" title="Automatisch auf offene Karte einrasten">
-          🎯 Einrasten
+        <button id="cs-btn-snap-img" style="pointer-events: auto; background: rgba(15, 23, 42, 0.9); color: #34d399; font-family: sans-serif; font-size: 10px; font-weight: 700; padding: 3px 8px; border-radius: 5px; border: 1px solid rgba(52,211,153,0.4); cursor: pointer;" title="Automatisch auf offene Karte einrasten">
+          🎯 Auf Karte einrasten
         </button>
       </div>
 
@@ -107,8 +107,8 @@ class CardTracker {
     this.applyBoxStyle();
     this.bindEvents();
 
-    // Auto-snap to foreground card
-    setTimeout(() => this.autoSnapToProminentImage(), 500);
+    // Auto-snap on start
+    setTimeout(() => this.autoSnapToProminentImage(), 600);
   }
 
   applyBoxStyle() {
@@ -184,65 +184,51 @@ class CardTracker {
    * Intelligently locks onto the foreground card (Filtering out 9:16 stream backgrounds)
    */
   autoSnapToProminentImage() {
-    // 1. Modal / Dialog card images (e.g. opened product photos)
-    const modalImgs = Array.from(document.querySelectorAll('[role="dialog"] img, [class*="modal"] img, [class*="overlay"] img, [class*="product"] img, [data-testid*="product"] img')).filter(img => {
-      if (img.closest('#cardscanner-root') || img.closest('#cardscanner-tracker-layer')) return false;
-      const r = img.getBoundingClientRect();
+    // Collect all potential card elements (img, video, div with background-image)
+    const elements = Array.from(document.querySelectorAll('img, video, [style*="background-image"], [class*="Image"], [class*="media"], [class*="thumbnail"], [class*="photo"]')).filter(el => {
+      if (el.closest('#cardscanner-root') || el.closest('#cardscanner-tracker-layer')) return false;
+      const r = el.getBoundingClientRect();
+      if (r.width < 120 || r.height < 150) return false;
+      if (r.top < -50 || r.top > window.innerHeight || r.left < 0 || r.left > window.innerWidth) return false;
+
+      // Check card aspect ratio
       const ratio = r.height / r.width;
-      return r.width >= 120 && r.height >= 160 && ratio >= 1.15 && ratio <= 1.65;
+      return ratio >= 1.15 && ratio <= 1.65;
     });
 
-    // 2. Element directly at screen center (Card Modal or Stream)
-    const centerEl = document.elementFromPoint(window.innerWidth / 2, window.innerHeight / 2);
-    let centerImg = null;
-    if (centerEl && !centerEl.closest('#cardscanner-root') && !centerEl.closest('#cardscanner-tracker-layer')) {
-      centerImg = centerEl.tagName === 'IMG' ? centerEl : centerEl.querySelector('img');
-    }
-
-    // 3. All visible images with authentic Trading Card Aspect Ratio (1 : 1.25 to 1.55)
-    const allCardImgs = Array.from(document.querySelectorAll('img')).filter(img => {
-      if (img.closest('#cardscanner-root') || img.closest('#cardscanner-tracker-layer')) return false;
-      const r = img.getBoundingClientRect();
-      if (r.width < 120 || r.height < 160 || r.top < 0 || r.bottom > window.innerHeight) return false;
-      const ratio = r.height / r.width;
-      return ratio >= 1.22 && ratio <= 1.55; // Strict trading card ratio!
-    });
-
-    let candidate = null;
-
-    if (modalImgs.length > 0) {
-      candidate = modalImgs[0];
-    } else if (centerImg) {
-      const cr = centerImg.getBoundingClientRect();
-      const crRatio = cr.height / cr.width;
-      if (cr.width >= 140 && cr.height >= 180 && crRatio >= 1.15 && crRatio <= 1.65) {
-        candidate = centerImg;
+    if (elements.length === 0) {
+      // Fallback: Check elements around center of viewport
+      const centerEl = document.elementFromPoint(window.innerWidth / 2, window.innerHeight / 2);
+      if (centerEl && !centerEl.closest('#cardscanner-root') && !centerEl.closest('#cardscanner-tracker-layer')) {
+        const r = centerEl.getBoundingClientRect();
+        if (r.width >= 140 && r.height >= 180) {
+          elements.push(centerEl);
+        }
       }
     }
 
-    if (!candidate && allCardImgs.length > 0) {
-      // Pick the image closest to center of screen
-      allCardImgs.sort((a, b) => {
+    if (elements.length > 0) {
+      // Sort by proximity to center of viewport
+      elements.sort((a, b) => {
         const rA = a.getBoundingClientRect();
         const rB = b.getBoundingClientRect();
         const distA = Math.hypot((rA.left + rA.width / 2) - window.innerWidth / 2, (rA.top + rA.height / 2) - window.innerHeight / 2);
         const distB = Math.hypot((rB.left + rB.width / 2) - window.innerWidth / 2, (rB.top + rB.height / 2) - window.innerHeight / 2);
         return distA - distB;
       });
-      candidate = allCardImgs[0];
-    }
 
-    if (candidate) {
-      const r = candidate.getBoundingClientRect();
+      const best = elements[0];
+      const r = best.getBoundingClientRect();
+
       this.pos = {
-        left: Math.max(8, Math.round(r.left - 4)),
-        top: Math.max(8, Math.round(r.top - 4)),
-        width: Math.round(r.width + 8),
-        height: Math.round(r.height + 8)
+        left: Math.max(8, Math.round(r.left - 2)),
+        top: Math.max(8, Math.round(r.top - 2)),
+        width: Math.round(r.width + 4),
+        height: Math.round(r.height + 4)
       };
 
       this.applyBoxStyle();
-      console.log('[Card Scanner+] ✓ Perfectly locked onto foreground card image:', candidate, this.pos);
+      console.log('[Card Scanner+] ✓ Auto-snapped directly to card:', best, this.pos);
       return true;
     }
 
@@ -257,10 +243,20 @@ class CardTracker {
       const target = e.target;
       if (target.closest('#cardscanner-root') || target.closest('#cardscanner-tracker-layer')) return;
 
-      setTimeout(() => {
-        this.autoSnapToProminentImage();
-      }, 300);
+      // When clicking on a product or image, poll for 800ms to catch the opened card picture
+      [150, 350, 600, 900].forEach(delay => {
+        setTimeout(() => {
+          this.autoSnapToProminentImage();
+        }, delay);
+      });
     }, true);
+
+    // Also observe DOM additions (modals/drawers)
+    const observer = new MutationObserver(() => {
+      this.autoSnapToProminentImage();
+    });
+
+    observer.observe(document.body, { childList: true, subtree: true });
   }
 
   getTrackedCardRect() {
