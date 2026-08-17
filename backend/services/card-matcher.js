@@ -27,11 +27,10 @@ export async function matchCandidates(params = {}) {
 
   // 2. Build Search Keys & Cache Key
   const cardName = geminiCard?.card_name_de || geminiCard?.card_name || query || '';
-  const detectedNumber = geminiCard?.card_number || number || '';
+  const detectedNumber = geminiCard?.full_number_code || geminiCard?.card_number || number || '';
   const detectedSet = geminiCard?.set_name || setCode || '';
-  const detectedCode = geminiCard?.full_number_code || code || '';
 
-  const searchKey = `${cardName}_${detectedNumber}_${detectedSet}_${detectedCode}_${auctionHint || ''}`.trim();
+  const searchKey = `${cardName}_${detectedNumber}_${detectedSet}_${auctionHint || ''}`.trim();
 
   if (searchKey) {
     const cached = memoryCache.get(searchKey);
@@ -76,14 +75,25 @@ export async function matchCandidates(params = {}) {
   console.log('[Card Matcher] Searching Supabase with terms:', cleanTerms);
 
   // 4. Query Supabase
-  const [priceRows, imageRows] = await Promise.all([
-    searchPriceHistory(cleanTerms),
-    searchCardImages(cleanTerms)
-  ]);
+  let priceRows = [];
+  let imageRows = [];
+
+  if (cleanTerms.length > 0) {
+    try {
+      const [pRows, iRows] = await Promise.all([
+        searchPriceHistory(cleanTerms),
+        searchCardImages(cleanTerms)
+      ]);
+      priceRows = pRows || [];
+      imageRows = iRows || [];
+    } catch (e) {
+      console.warn('[Card Matcher] Supabase query warning:', e.message);
+    }
+  }
 
   const candidateMap = new Map();
 
-  // Process Supabase Price History (Highest Priority - Real Prices)
+  // A. Process Supabase Price History (Highest Priority - Real Prices)
   if (priceRows && priceRows.length > 0) {
     const cardIds = priceRows.map(r => r.card_id).filter(Boolean);
     const imageMap = await fetchCardImages(cardIds);
@@ -101,7 +111,7 @@ export async function matchCandidates(params = {}) {
         name: geminiCard?.card_name_de || details.name || geminiCard?.card_name || 'Pokémon Karte',
         set_name: details.setName || geminiCard?.set_name || 'Pokémon TCG',
         number: details.number || detectedNumber,
-        rarity: geminiCard?.rarity || details.rarity,
+        rarity: geminiCard?.rarity || details.rarity || 'Rare',
         language: (geminiCard?.language || row.language || 'DE').toUpperCase(),
         seller_country: row.seller_country || 'DE',
         condition: row.condition || 'NM',
@@ -119,7 +129,7 @@ export async function matchCandidates(params = {}) {
     }
   }
 
-  // Process Additional Images from Supabase
+  // B. Process Additional Images from Supabase
   if (candidateMap.size < 5 && imageRows && imageRows.length > 0) {
     for (const imgRow of imageRows) {
       if (candidateMap.has(imgRow.card_id)) continue;
@@ -131,7 +141,7 @@ export async function matchCandidates(params = {}) {
         name: geminiCard?.card_name_de || details.name || geminiCard?.card_name || 'Pokémon Karte',
         set_name: details.setName || geminiCard?.set_name || 'Pokémon Expansion',
         number: details.number || detectedNumber,
-        rarity: geminiCard?.rarity || details.rarity,
+        rarity: geminiCard?.rarity || details.rarity || 'Rare',
         language: (geminiCard?.language || 'DE').toUpperCase(),
         seller_country: 'DE',
         condition: 'NM',
@@ -149,30 +159,33 @@ export async function matchCandidates(params = {}) {
     }
   }
 
-  // If Gemini found a card but Supabase had no matching price row:
-  if (candidateMap.size === 0 && geminiCard && (geminiCard.card_name || geminiCard.card_name_de)) {
+  // C. ALWAYS GENERATE CANDIDATE FROM GEMINI VISION (Even if not in local Supabase DB!)
+  if (geminiCard && (geminiCard.card_name || geminiCard.card_name_de)) {
     const displayName = geminiCard.card_name_de || geminiCard.card_name;
-    const searchString = `${displayName} ${geminiCard.card_number || ''}`.trim();
+    const numStr = geminiCard.full_number_code || geminiCard.card_number || '';
+    const searchString = `${displayName} ${numStr}`.trim();
 
-    candidateMap.set('gemini_direct_match', {
-      id: `ai_match_${Date.now()}`,
-      card_id: `/Pokemon/Search/${encodeURIComponent(displayName)}`,
-      name: displayName,
-      set_name: geminiCard.set_name || 'Pokémon TCG',
-      number: geminiCard.full_number_code || geminiCard.card_number || '',
-      rarity: geminiCard.rarity || 'Card',
-      language: (geminiCard.language || 'DE').toUpperCase(),
-      seller_country: 'DE',
-      condition: 'NM',
-      price_trend: null,
-      price_psa10: null,
-      price_psa9: null,
-      match_score: 99,
-      image_url: null,
-      cardmarket_url: `https://www.cardmarket.com/de/Pokemon/Products/Search?searchString=${encodeURIComponent(searchString)}`,
-      scanned_at: null,
-      gemini_meta: geminiCard
-    });
+    if (!candidateMap.has('gemini_direct_match') && candidateMap.size === 0) {
+      candidateMap.set('gemini_direct_match', {
+        id: `ai_match_${Date.now()}`,
+        card_id: `/Pokemon/Search/${encodeURIComponent(displayName)}`,
+        name: displayName,
+        set_name: geminiCard.set_name || 'Pokémon TCG',
+        number: numStr,
+        rarity: geminiCard.rarity || 'Rare',
+        language: (geminiCard.language || 'DE').toUpperCase(),
+        seller_country: 'DE',
+        condition: 'NM',
+        price_trend: null,
+        price_psa10: null,
+        price_psa9: null,
+        match_score: 99,
+        image_url: null,
+        cardmarket_url: `https://www.cardmarket.com/de/Pokemon/Products/Search?searchString=${encodeURIComponent(searchString)}`,
+        scanned_at: null,
+        gemini_meta: geminiCard
+      });
+    }
   }
 
   const candidates = Array.from(candidateMap.values());

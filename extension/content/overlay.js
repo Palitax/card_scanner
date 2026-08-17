@@ -89,8 +89,8 @@ class CardScannerOverlay {
         </div>
       `;
     } else if (currentCard) {
-      const imgUrl = currentCard.image_url || chrome.runtime.getURL('icons/icon-128.png');
-      const lang = (currentCard.language || 'EN').toUpperCase();
+      const imgUrl = currentCard.image_url || lastScanMeta?.capturedThumbnail || chrome.runtime.getURL('icons/icon-128.png');
+      const lang = (currentCard.language || 'DE').toUpperCase();
       const matchScore = currentCard.match_score || 99;
       const title = currentCard.name || 'Pokémon Karte';
       const subtitle = `${currentCard.set_name || 'Set'} • #${currentCard.number || ''}`;
@@ -138,8 +138,8 @@ class CardScannerOverlay {
 
       const candidateListHtml = (candidates || []).map((cand, idx) => {
         const isSel = idx === selectedIndex ? 'cs-selected' : '';
-        const cImg = cand.image_url || imgUrl;
-        const cLang = (cand.language || 'EN').toUpperCase();
+        const cImg = cand.image_url || lastScanMeta?.capturedThumbnail || imgUrl;
+        const cLang = (cand.language || 'DE').toUpperCase();
         const cScore = cand.match_score || (idx === 0 ? 99 : 50);
         return `
           <div class="cs-cand-item ${isSel}" data-index="${idx}">
@@ -150,9 +150,10 @@ class CardScannerOverlay {
         `;
       }).join('');
 
+      const searchTermsEncoded = encodeURIComponent(`${currentCard.name || ''} ${currentCard.number || ''}`.trim());
       const cardmarketUrl = currentCard.cardmarket_url 
         ? (currentCard.cardmarket_url.startsWith('http') ? currentCard.cardmarket_url : `https://www.cardmarket.com${currentCard.cardmarket_url}`)
-        : `https://www.cardmarket.com/de/Pokemon/Products/Search?searchString=${encodeURIComponent(currentCard.name || '')}`;
+        : `https://www.cardmarket.com/de/Pokemon/Products/Search?searchString=${searchTermsEncoded}`;
 
       bodyContent = `
         <!-- Active Hero Card -->
@@ -163,7 +164,7 @@ class CardScannerOverlay {
           </div>
           <div class="cs-card-info">
             <div>
-              <span class="cs-match-pill">${matchScore}% match</span>
+              <span class="cs-match-pill">⚡ ${matchScore}% KI-Erkannt</span>
               <h2 class="cs-card-title">${title}</h2>
               <div class="cs-card-subtitle">${subtitle}</div>
               <div class="cs-rarity-row">
@@ -172,7 +173,7 @@ class CardScannerOverlay {
               </div>
             </div>
             <div class="cs-price-hero">
-              <span class="cs-price-val">${priceTrend ? this.formatPrice(priceTrend) : 'Preise laden...'}</span>
+              <span class="cs-price-val">${priceTrend ? this.formatPrice(priceTrend) : '<span style="font-size:12px; color:#818cf8;">Auf Cardmarket prüfen ↗</span>'}</span>
               ${pricePSA10 ? `
               <div class="cs-price-psa-wrap">
                 <span class="cs-psa-tag" title="PSA 10 Comps">PSA 10 <span>${this.formatPrice(pricePSA10)}</span></span>
@@ -211,19 +212,19 @@ class CardScannerOverlay {
         <!-- Variants Picker -->
         <div>
           <div class="cs-section-label" style="margin-bottom: 6px; margin-top: 10px;">
-            <span>Variants (${(candidates || []).length})</span>
+            <span>Treffer & Varianten (${(candidates || []).length})</span>
           </div>
           <div class="cs-candidates-scroll">
             ${candidateListHtml}
             <div class="cs-cand-item cs-cand-none" id="cs-btn-none">
               <span>✕</span>
-              <span>None</span>
+              <span>Reset</span>
             </div>
           </div>
         </div>
 
         <a href="${cardmarketUrl}" target="_blank" rel="noopener noreferrer" class="cs-btn-cardmarket" id="cs-btn-open-cm" style="margin-top: 10px;">
-          Auf Cardmarket öffnen ↗
+          "${title}" auf Cardmarket öffnen ↗
         </a>
       `;
     } else {
@@ -267,7 +268,7 @@ class CardScannerOverlay {
             </h3>
             
             <p style="font-size: 12px; line-height: 1.4; margin-bottom: 12px; color: #94a3b8;">
-              ${detectedCode ? 'Nummer nicht in der Datenbank gefunden.' : 'Ziehe den blauen Rahmen über die Karte und drücke <b style="color:#818cf8;">S</b>.'}
+              ${detectedCode ? 'Nummer nicht in der Datenbank gefunden.' : 'Der grüne Rahmen passt sich automatisch an. Drücke <b style="color:#818cf8;">S</b> zum Scannen.'}
             </p>
             
             <a href="${cmSearchUrl}" target="_blank" class="cs-btn-cardmarket" id="cs-btn-fallback-cm" style="max-width:260px; margin: 0 auto;">
