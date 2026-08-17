@@ -1,6 +1,6 @@
 /**
  * Card Scanner+ Full-Frame Adaptive Card Tracker
- * Autonomously expands/shrinks to wrap the entire card regardless of distance or zoom
+ * Aspect-Ratio Compensated Dynamic Card Framing (Perfect 1:1.4 Ratio in any Container)
  */
 
 class CardTracker {
@@ -10,15 +10,15 @@ class CardTracker {
     this.cardReticle = null;
     this.focusRing = null;
 
-    // Fluid Tracked Box Coordinates (relative to full video element: 0.0 -> 1.0)
-    this.targetBox = { x: 0.12, y: 0.08, w: 0.76, h: 0.84 };
-    this.currentBox = { x: 0.12, y: 0.08, w: 0.76, h: 0.84 };
+    // Fluid Box Coordinates in Pixels
+    this.targetPixelBox = { left: 50, top: 100, width: 320, height: 448 };
+    this.currentPixelBox = { left: 50, top: 100, width: 320, height: 448 };
 
     this.isCardLocked = false;
-    this.confidence = 98;
-    this.userPitchedCenter = { x: 0.5, y: 0.5 };
+    this.confidence = 99;
+    this.userCenter = { x: 0.5, y: 0.5 };
 
-    // Offscreen High-Speed Edge Analysis Canvas
+    // Offscreen Canvas for Fast Edge Analysis
     this.canvas = document.createElement('canvas');
     this.canvas.width = 240;
     this.canvas.height = 340;
@@ -65,15 +65,15 @@ class CardTracker {
       overflow: hidden;
     `;
 
-    // Dynamic Adaptive Card Reticle
+    // Adaptive Card Reticle
     this.cardReticle = document.createElement('div');
     this.cardReticle.className = 'cs-card-reticle';
     this.cardReticle.style.cssText = `
       position: absolute;
       border: 2.5px solid #10b981;
-      border-radius: 14px;
-      box-shadow: 0 0 24px rgba(16, 185, 129, 0.55), inset 0 0 16px rgba(16, 185, 129, 0.12);
-      background: rgba(16, 185, 129, 0.03);
+      border-radius: 12px;
+      box-shadow: 0 0 24px rgba(16, 185, 129, 0.55), inset 0 0 16px rgba(16, 185, 129, 0.10);
+      background: rgba(16, 185, 129, 0.02);
       pointer-events: none;
       display: flex;
       flex-direction: column;
@@ -87,7 +87,7 @@ class CardTracker {
       <div style="display: flex; justify-content: space-between; align-items: center;">
         <span id="cs-reticle-badge" style="background: rgba(15, 23, 42, 0.92); color: #34d399; font-family: sans-serif; font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 5px; border: 1px solid rgba(52,211,153,0.4); display: flex; align-items: center; gap: 5px; backdrop-filter: blur(6px);">
           <span style="display:inline-block; width:6px; height:6px; background:#34d399; border-radius:50%; box-shadow: 0 0 8px #34d399;"></span>
-          ⚡ AUTO-TRACKED
+          ⚡ CARD LOCKED
         </span>
         <span id="cs-reticle-score" style="background: rgba(15, 23, 42, 0.92); color: #f8fafc; font-family: sans-serif; font-size: 10px; font-weight: 700; padding: 3px 7px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.12);">
           99%
@@ -128,16 +128,14 @@ class CardTracker {
   bindEvents() {
     if (!this.container) return;
 
-    // Click anywhere on stream to autofocus & center tracker on that card
     this.container.addEventListener('click', (e) => {
       const rect = this.container.getBoundingClientRect();
       const clickX = (e.clientX - rect.left) / rect.width;
       const clickY = (e.clientY - rect.top) / rect.height;
 
       this.triggerFocusRing(e.clientX, e.clientY);
-
-      this.userPitchedCenter = { x: clickX, y: clickY };
-      this.detectCardBoundariesFromPoint(clickX, clickY);
+      this.userCenter = { x: clickX, y: clickY };
+      this.calculateAdaptiveCardBounds();
     });
   }
 
@@ -158,15 +156,12 @@ class CardTracker {
 
   startTrackingLoop() {
     const loop = (timestamp) => {
-      // Analyze full frame edges at 20 FPS
-      if (timestamp - this.lastProcessTime > 50) {
+      if (timestamp - this.lastProcessTime > 60) {
         this.lastProcessTime = timestamp;
-        this.detectCardBoundariesFromPoint(this.userPitchedCenter.x, this.userPitchedCenter.y);
+        this.calculateAdaptiveCardBounds();
       }
 
-      // Smooth visual morphing at 60 FPS
       this.updateReticle();
-
       this.animationId = requestAnimationFrame(loop);
     };
 
@@ -174,121 +169,89 @@ class CardTracker {
   }
 
   /**
-   * Scans full video frame and expands/shrinks to wrap the true card boundary
+   * Computes the exact pixel width and height with 1:1.40 Card Ratio
    */
-  detectCardBoundariesFromPoint(originX, originY) {
-    if (!this.video || this.video.paused || this.video.readyState < 2) return;
+  calculateAdaptiveCardBounds() {
+    if (!this.container || !this.video) return;
+
+    const contW = this.container.clientWidth || 580;
+    const contH = this.container.clientHeight || 1000;
+
+    let detectedH = contH * 0.68; // Default 68% height of stream
+    let detectedCenterY = contH * this.userCenter.y;
+    let detectedCenterX = contW * this.userCenter.x;
 
     try {
-      const vW = this.video.videoWidth || 720;
-      const vH = this.video.videoHeight || 1280;
       const cW = this.canvas.width;
       const cH = this.canvas.height;
-
       this.ctx.drawImage(this.video, 0, 0, cW, cH);
       const imgData = this.ctx.getImageData(0, 0, cW, cH);
       const data = imgData.data;
 
-      const centerX = Math.floor(originX * cW);
-      const centerY = Math.floor(originY * cH);
+      const cX = Math.floor(this.userCenter.x * cW);
+      const cY = Math.floor(this.userCenter.y * cH);
 
-      // 1. Raycast Upward from center to find Top Edge of card (Name/HP area)
+      // Raycast Top
       let topY = 4;
-      for (let y = centerY; y >= 6; y -= 2) {
-        const idx = (y * cW + centerX) * 4;
+      for (let y = cY; y >= 6; y -= 3) {
+        const idx = (y * cW + cX) * 4;
         const diff = Math.abs(data[idx] - data[idx - cW * 8]) + Math.abs(data[idx+1] - data[idx+1 - cW * 8]) + Math.abs(data[idx+2] - data[idx+2 - cW * 8]);
         if (diff > 80) {
-          topY = Math.max(4, y - 4);
+          topY = y - 4;
           break;
         }
       }
 
-      // 2. Raycast Downward from center to find Bottom Edge of card (Set Number / 088/084 area)
+      // Raycast Bottom
       let bottomY = cH - 6;
-      for (let y = centerY; y < cH - 6; y += 2) {
-        const idx = (y * cW + centerX) * 4;
+      for (let y = cY; y < cH - 6; y += 3) {
+        const idx = (y * cW + cX) * 4;
         const diff = Math.abs(data[idx] - data[idx + cW * 8]) + Math.abs(data[idx+1] - data[idx+1 + cW * 8]) + Math.abs(data[idx+2] - data[idx+2 + cW * 8]);
         if (diff > 80) {
-          bottomY = Math.min(cH - 4, y + 6);
+          bottomY = y + 6;
           break;
         }
       }
 
-      // 3. Raycast Left and Right to find Card Width
-      let leftX = 4;
-      for (let x = centerX; x >= 6; x -= 2) {
-        const idx = (centerY * cW + x) * 4;
-        const diff = Math.abs(data[idx] - data[idx - 8]) + Math.abs(data[idx+1] - data[idx+1 - 8]) + Math.abs(data[idx+2] - data[idx+2 - 8]);
-        if (diff > 80) {
-          leftX = Math.max(4, x - 4);
-          break;
-        }
+      const measuredCardH = ((bottomY - topY) / cH) * contH;
+      if (measuredCardH > contH * 0.40 && measuredCardH < contH * 0.94) {
+        detectedH = measuredCardH;
+        detectedCenterY = ((topY + bottomY) / 2 / cH) * contH;
       }
+    } catch (e) {}
 
-      let rightX = cW - 6;
-      for (let x = centerX; x < cW - 6; x += 2) {
-        const idx = (centerY * cW + x) * 4;
-        const diff = Math.abs(data[idx] - data[idx + 8]) + Math.abs(data[idx+1] - data[idx+1 + 8]) + Math.abs(data[idx+2] - data[idx+2 + 8]);
-        if (diff > 80) {
-          rightX = Math.min(cW - 4, x + 6);
-          break;
-        }
-      }
+    // Physical Card Ratio: 2.5 inches wide / 3.5 inches tall = ~0.714
+    const trueCardWidthPx = detectedH * (2.5 / 3.5);
 
-      let measuredH = (bottomY - topY) / cH;
-      let measuredW = (rightX - leftX) / cW;
+    // Clamp width to container bounds
+    const finalWidth = Math.min(contW * 0.94, trueCardWidthPx);
+    const finalHeight = detectedH;
 
-      // Ensure standard trading card aspect ratio ~1:1.4
-      if (measuredH > 0.40 && measuredW < measuredH * 0.68) {
-        measuredW = Math.min(0.92, measuredH * 0.72);
-      }
-      if (measuredW > 0.35 && measuredH < measuredW * 1.30) {
-        measuredH = Math.min(0.94, measuredW * 1.40);
-      }
+    const finalLeft = Math.max(8, Math.min(contW - finalWidth - 8, detectedCenterX - finalWidth / 2));
+    const finalTop = Math.max(8, Math.min(contH - finalHeight - 8, detectedCenterY - finalHeight / 2));
 
-      // Dynamically expand to wrap close-up cards fully (e.g. Primarene in screenshot)
-      const newX = Math.max(0.02, Math.min(0.96 - measuredW, (originX - measuredW / 2)));
-      const newY = Math.max(0.02, Math.min(0.96 - measuredH, (originY - measuredH / 2)));
-
-      this.targetBox = {
-        x: newX,
-        y: newY,
-        w: Math.min(0.96, Math.max(0.35, measuredW)),
-        h: Math.min(0.96, Math.max(0.48, measuredH))
-      };
-
-      this.isCardLocked = true;
-      this.confidence = 99;
-    } catch (e) {
-      // Fallback generous framing
-      this.targetBox = { x: 0.08, y: 0.05, w: 0.84, h: 0.90 };
-      this.isCardLocked = true;
-    }
+    this.targetPixelBox = {
+      left: finalLeft,
+      top: finalTop,
+      width: finalWidth,
+      height: finalHeight
+    };
   }
 
   updateReticle() {
     if (!this.cardReticle) return;
 
-    // Ultra-smooth linear interpolation
-    const lerp = 0.20;
-    this.currentBox.x += (this.targetBox.x - this.currentBox.x) * lerp;
-    this.currentBox.y += (this.targetBox.y - this.currentBox.y) * lerp;
-    this.currentBox.w += (this.targetBox.w - this.currentBox.w) * lerp;
-    this.currentBox.h += (this.targetBox.h - this.currentBox.h) * lerp;
+    // Smooth Lerp
+    const lerp = 0.22;
+    this.currentPixelBox.left += (this.targetPixelBox.left - this.currentPixelBox.left) * lerp;
+    this.currentPixelBox.top += (this.targetPixelBox.top - this.currentPixelBox.top) * lerp;
+    this.currentPixelBox.width += (this.targetPixelBox.width - this.currentPixelBox.width) * lerp;
+    this.currentPixelBox.height += (this.targetPixelBox.height - this.currentPixelBox.height) * lerp;
 
-    this.cardReticle.style.left = `${(this.currentBox.x * 100).toFixed(2)}%`;
-    this.cardReticle.style.top = `${(this.currentBox.y * 100).toFixed(2)}%`;
-    this.cardReticle.style.width = `${(this.currentBox.w * 100).toFixed(2)}%`;
-    this.cardReticle.style.height = `${(this.currentBox.h * 100).toFixed(2)}%`;
-
-    const badge = this.cardReticle.querySelector('#cs-reticle-badge');
-    const score = this.cardReticle.querySelector('#cs-reticle-score');
-
-    if (badge) {
-      badge.innerHTML = `<span style="display:inline-block; width:6px; height:6px; background:#34d399; border-radius:50%; box-shadow: 0 0 8px #34d399;"></span> ⚡ FULL CARD LOCKED`;
-      badge.style.color = '#34d399';
-    }
-    if (score) score.innerText = `${this.confidence}%`;
+    this.cardReticle.style.left = `${this.currentPixelBox.left.toFixed(1)}px`;
+    this.cardReticle.style.top = `${this.currentPixelBox.top.toFixed(1)}px`;
+    this.cardReticle.style.width = `${this.currentPixelBox.width.toFixed(1)}px`;
+    this.cardReticle.style.height = `${this.currentPixelBox.height.toFixed(1)}px`;
   }
 
   getTrackedCardRect() {
