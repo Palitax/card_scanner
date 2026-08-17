@@ -1,15 +1,16 @@
 /**
  * Card Scanner+ Content Script (Master Orchestrator)
- * Multimodal AI Frame Capture & Whatnot Stream Live Search
+ * Auto Card Tracking, Whatnot Live Bid Extraction & Gemini Vision Client
  */
 
 (function () {
-  console.log('[Card Scanner+] Content Script with AI Vision loaded.');
+  console.log('[Card Scanner+] Content Script with Auto-Tracker loaded.');
 
-  let backendUrl = 'http://localhost:3001';
+  let backendUrl = 'https://cardscanner-nine.vercel.app';
   let hotkeyChar = 's';
   let geminiApiKey = '';
   let isCapturing = false;
+  let activeVideo = null;
 
   // 1. Fetch user configuration
   chrome.runtime.sendMessage({ action: 'GET_CONFIG' }, (resp) => {
@@ -20,21 +21,67 @@
     }
   });
 
-  // 2. Locate Active Whatnot Video Stream
-  function findWhatnotVideoStream() {
+  // 2. Locate Active Whatnot Video Stream & Attach Tracker
+  function setupStreamTracker() {
     const videos = Array.from(document.querySelectorAll('video'));
-    if (videos.length === 0) return null;
-
     for (const v of videos) {
       const rect = v.getBoundingClientRect();
       if (rect.width > 150 && rect.height > 150 && !v.paused && v.readyState >= 2) {
-        return v;
+        if (activeVideo !== v) {
+          activeVideo = v;
+          if (window.cardTracker) {
+            console.log('[Card Scanner+] Initializing Real-Time Card Tracker on video...');
+            window.cardTracker.init(activeVideo);
+          }
+        }
+        return activeVideo;
       }
     }
-    return videos[0];
+    return activeVideo || videos[0];
   }
 
-  // 3. Scrape Whatnot Active Auction / Pinned Item Text
+  // Periodic stream check in case Whatnot switches stream containers
+  setInterval(setupStreamTracker, 1500);
+
+  // 3. Scrape Current Whatnot Live Bid Amount (€)
+  function getCurrentWhatnotBid() {
+    try {
+      const bidSelectors = [
+        '[data-testid*="current-bid"]',
+        '[data-testid*="auction-price"]',
+        '.live-auction-bid',
+        '[class*="CurrentBid"]',
+        '[class*="PriceDisplay"]',
+        'div[class*="bid-amount"]'
+      ];
+
+      for (const sel of bidSelectors) {
+        const el = document.querySelector(sel);
+        if (el && el.innerText) {
+          const match = el.innerText.match(/(\d+(?:[.,]\d{1,2})?)\s*(?:€|EUR|\$)?/);
+          if (match) {
+            const val = parseFloat(match[1].replace(',', '.'));
+            if (!isNaN(val) && val > 0) return val;
+          }
+        }
+      }
+
+      // Check text in auction action buttons
+      const buttons = document.querySelectorAll('button, div');
+      for (const btn of buttons) {
+        if (btn.innerText && (btn.innerText.includes('Gebot:') || btn.innerText.includes('Bid:') || btn.innerText.includes('Aktuell:'))) {
+          const m = btn.innerText.match(/(?:Gebot|Bid|Aktuell)[:\s]+(\d+(?:[.,]\d{1,2})?)/i);
+          if (m) {
+            const val = parseFloat(m[1].replace(',', '.'));
+            if (!isNaN(val) && val > 0) return val;
+          }
+        }
+      }
+    } catch (e) {}
+    return null;
+  }
+
+  // 4. Scrape Whatnot Active Auction / Pinned Item Text
   function getWhatnotLiveAuctionHint() {
     try {
       const selectors = [
@@ -65,7 +112,7 @@
     return null;
   }
 
-  // 4. Hotkey Listener with Chat-Guard
+  // 5. Hotkey Listener with Chat-Guard
   window.addEventListener('keydown', (e) => {
     const activeEl = document.activeElement;
     const isInputActive = activeEl && (
@@ -80,7 +127,7 @@
 
     if (e.key && e.key.toLowerCase() === hotkeyChar.toLowerCase()) {
       e.preventDefault();
-      console.log(`[Card Scanner+] Hotkey '${e.key}' triggered AI card capture.`);
+      console.log(`[Card Scanner+] Hotkey '${e.key}' triggered capture.`);
       performAICapture();
     }
   }, true);
@@ -96,7 +143,7 @@
   }
 
   /**
-   * Captures High-Resolution Card Frame & Identifies with Gemini AI
+   * Captures the tracked card frame and runs AI identification
    */
   async function performAICapture() {
     if (isCapturing) return;
@@ -107,22 +154,23 @@
     }
 
     try {
-      const video = findWhatnotVideoStream();
+      const video = setupStreamTracker();
       const auctionHint = getWhatnotLiveAuctionHint();
-      console.log('[Card Scanner+] Whatnot Context:', auctionHint);
+      const currentLiveBid = getCurrentWhatnotBid();
+      console.log('[Card Scanner+] Scan Triggered:', { auctionHint, currentLiveBid });
 
       let imageBase64 = null;
 
-      // Direct Canvas Frame Grab
-      if (video) {
+      // Primary: Get perspective-tracked card crop
+      if (window.cardTracker) {
         try {
-          imageBase64 = grabHighResCardSnapshot(video);
+          imageBase64 = window.cardTracker.getCroppedCardBase64();
         } catch (err) {
-          console.warn('[Card Scanner+] Direct canvas capture failed. Trying fallback...', err);
+          console.warn('[Card Scanner+] Tracker crop failed, falling back...', err);
         }
       }
 
-      // Background Tab Screen Capture Fallback
+      // Fallback screen capture
       if (!imageBase64) {
         imageBase64 = await grabHighResFallback(video);
       }
@@ -131,10 +179,9 @@
         throw new Error('Kein Videobild verfügbar.');
       }
 
-      console.log('[Card Scanner+] Sending High-Res Card Image to AI Vision Backend...');
+      console.log('[Card Scanner+] Sending optimized card crop (35 KB) to Gemini AI Vision Backend...');
 
-      // Query AI Backend
-      await queryAIBackend(imageBase64, auctionHint);
+      await queryAIBackend(imageBase64, auctionHint, currentLiveBid);
     } catch (err) {
       console.error('[Card Scanner+] Capture error:', err);
       if (window.cardScannerOverlay) {
@@ -146,30 +193,7 @@
   }
 
   /**
-   * Cuts High-Resolution Card Frame (Center 75% of Stream)
-   */
-  function grabHighResCardSnapshot(video) {
-    const vW = video.videoWidth || video.clientWidth || 720;
-    const vH = video.videoHeight || video.clientHeight || 1280;
-
-    const cardX = Math.floor(vW * 0.10);
-    const cardY = Math.floor(vH * 0.15);
-    const cardW = Math.floor(vW * 0.80);
-    const cardH = Math.floor(vH * 0.70);
-
-    const canvas = document.createElement('canvas');
-    canvas.width = cardW;
-    canvas.height = cardH;
-    const ctx = canvas.getContext('2d');
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(video, cardX, cardY, cardW, cardH, 0, 0, cardW, cardH);
-
-    return canvas.toDataURL('image/jpeg', 0.88);
-  }
-
-  /**
-   * Fallback Screen Capture for CORS/MSE Tainted Streams
+   * Screen Capture Fallback
    */
   async function grabHighResFallback(video) {
     return new Promise((resolve) => {
@@ -188,18 +212,18 @@
           const vLeft = rect.left * dpr;
           const vTop = rect.top * dpr;
 
-          const cardX = Math.round(vLeft + vW * 0.10);
-          const cardY = Math.round(vTop + vH * 0.15);
-          const cardW = Math.round(vW * 0.80);
-          const cardH = Math.round(vH * 0.70);
+          const cardX = Math.round(vLeft + vW * 0.15);
+          const cardY = Math.round(vTop + vH * 0.18);
+          const cardW = Math.round(vW * 0.70);
+          const cardH = Math.round(vH * 0.62);
 
           const canvas = document.createElement('canvas');
-          canvas.width = cardW;
-          canvas.height = cardH;
+          canvas.width = 500;
+          canvas.height = 700;
           const ctx = canvas.getContext('2d');
-          ctx.drawImage(img, cardX, cardY, cardW, cardH, 0, 0, cardW, cardH);
+          ctx.drawImage(img, cardX, cardY, cardW, cardH, 0, 0, 500, 700);
 
-          resolve(canvas.toDataURL('image/jpeg', 0.88));
+          resolve(canvas.toDataURL('image/jpeg', 0.82));
         };
         img.onerror = () => resolve(null);
         img.src = response.dataUrl;
@@ -208,15 +232,16 @@
   }
 
   /**
-   * Sends Image to Vercel Gemini Vision Backend
+   * Queries Vercel Gemini Vision Backend
    */
-  async function queryAIBackend(imageBase64, auctionHint) {
+  async function queryAIBackend(imageBase64, auctionHint, currentLiveBid) {
     try {
       const endpoint = `${backendUrl}/api/search-candidates`;
       const payload = {
         imageBase64: imageBase64,
         customApiKey: geminiApiKey,
-        auctionHint: auctionHint || ''
+        auctionHint: auctionHint || '',
+        currentBid: currentLiveBid
       };
 
       console.log(`[Card Scanner+] Fetching from ${endpoint}...`);
@@ -239,7 +264,8 @@
       if (window.cardScannerOverlay) {
         window.cardScannerOverlay.showCandidates(data.candidates || [], 0, {
           detectedCode: detectedTitle,
-          capturedThumbnail: imageBase64
+          capturedThumbnail: imageBase64,
+          currentBid: currentLiveBid
         });
       }
     } catch (err) {
@@ -247,7 +273,8 @@
       if (window.cardScannerOverlay) {
         window.cardScannerOverlay.showCandidates([], 0, {
           detectedCode: null,
-          capturedThumbnail: imageBase64
+          capturedThumbnail: imageBase64,
+          currentBid: currentLiveBid
         });
       }
     }

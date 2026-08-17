@@ -355,12 +355,17 @@
   padding: 4px 2px;
   border-radius: 6px;
   background: rgba(255, 255, 255, 0.02);
-  transition: background 0.15s ease;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.cs-condition-item:hover {
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .cs-condition-item.cs-active {
-  background: rgba(99, 102, 241, 0.2);
-  border: 1px solid rgba(99, 102, 241, 0.4);
+  background: rgba(99, 102, 241, 0.25);
+  border: 1px solid rgba(99, 102, 241, 0.5);
 }
 
 .cs-cond-name {
@@ -458,95 +463,36 @@
 
 /* Sold & Market Deal Comparison Bar */
 .cs-deal-bar {
-  background: rgba(22, 22, 34, 0.85);
-  border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 10px;
   padding: 10px 12px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   font-size: 13px;
+  transition: all 0.2s ease;
+}
+
+.cs-deal-bargain {
+  background: rgba(16, 185, 129, 0.15) !important;
+  border: 1px solid rgba(16, 185, 129, 0.4) !important;
+  color: #34d399;
+}
+
+.cs-deal-fair {
+  background: rgba(59, 130, 246, 0.15) !important;
+  border: 1px solid rgba(59, 130, 246, 0.4) !important;
+  color: #60a5fa;
+}
+
+.cs-deal-overpaying {
+  background: rgba(239, 68, 68, 0.15) !important;
+  border: 1px solid rgba(239, 68, 68, 0.4) !important;
+  color: #f87171;
 }
 
 .cs-sold-badge {
   display: flex;
-  align-items: baseline;
-  gap: 4px;
-}
-
-.cs-sold-price {
-  font-weight: 800;
-  font-size: 15px;
-  color: #f8fafc;
-}
-
-.cs-sold-label {
-  font-size: 10px;
-  color: #94a3b8;
-  font-weight: 700;
-  text-transform: uppercase;
-}
-
-.cs-deal-pill {
-  font-size: 11px;
-  font-weight: 700;
-  padding: 3px 8px;
-  border-radius: 6px;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.cs-deal-overpaying {
-  background: rgba(239, 68, 68, 0.15);
-  color: #f87171;
-  border: 1px solid rgba(239, 68, 68, 0.3);
-}
-
-.cs-deal-great {
-  background: rgba(16, 185, 129, 0.15);
-  color: #34d399;
-  border: 1px solid rgba(16, 185, 129, 0.3);
-}
-
-/* Variants List */
-.cs-variants-list {
-  display: flex;
   flex-direction: column;
-  gap: 6px;
-}
-
-.cs-variant-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 10px;
-  background: rgba(22, 22, 34, 0.6);
-  border: 1px solid rgba(255, 255, 255, 0.04);
-  border-radius: 8px;
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.cs-variant-item:hover {
-  background: rgba(255, 255, 255, 0.06);
-  border-color: rgba(99, 102, 241, 0.3);
-}
-
-.cs-variant-name {
-  font-size: 12px;
-  font-weight: 600;
-  color: #cbd5e1;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 250px;
-}
-
-.cs-variant-price {
-  font-size: 12px;
-  font-weight: 700;
-  color: #38bdf8;
 }
 
 /* Direct Cardmarket Action Button */
