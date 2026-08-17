@@ -293,12 +293,12 @@ class CardScannerOverlay {
           </div>
         </div>
 
-        <!-- Dual 1-Click Action Buttons -->
+        <!-- Dual 1-Click Action Buttons with Exact Set-Code Search -->
         <div style="display: flex; gap: 6px; margin-top: 10px;">
-          <a href="${cardmarketUrl}" target="_blank" rel="noopener noreferrer" class="cs-btn-cardmarket" style="flex: 1; text-align: center; text-decoration: none; padding: 9px 4px; font-size: 11px; font-weight: 700; background: linear-gradient(135deg, #1d4ed8, #2563eb); border-radius: 8px; color: #fff; display: flex; align-items: center; justify-content: center; gap: 4px;">
-            🇪🇺 Cardmarket ↗
+          <a href="${cardmarketUrl}" target="_blank" rel="noopener noreferrer" class="cs-btn-cardmarket" style="flex: 1; text-align: center; text-decoration: none; padding: 9px 4px; font-size: 11px; font-weight: 700; background: linear-gradient(135deg, #1d4ed8, #2563eb); border-radius: 8px; color: #fff; display: flex; align-items: center; justify-content: center; gap: 4px;" title="Suche nach: ${currentCard.cardmarket_search || title}">
+            🇪🇺 Cardmarket ("${currentCard.cardmarket_search || currentCard.number || title}") ↗
           </a>
-          <a href="${tcgplayerUrl}" target="_blank" rel="noopener noreferrer" style="flex: 1; text-align: center; text-decoration: none; padding: 9px 4px; font-size: 11px; font-weight: 700; background: linear-gradient(135deg, #059669, #10b981); border-radius: 8px; color: #fff; display: flex; align-items: center; justify-content: center; gap: 4px;">
+          <a href="${tcgplayerUrl}" target="_blank" rel="noopener noreferrer" style="flex: 1; text-align: center; text-decoration: none; padding: 9px 4px; font-size: 11px; font-weight: 700; background: linear-gradient(135deg, #059669, #10b981); border-radius: 8px; color: #fff; display: flex; align-items: center; justify-content: center; gap: 4px;" title="TCGplayer Suche">
             🇺🇸 TCGplayer ↗
           </a>
         </div>

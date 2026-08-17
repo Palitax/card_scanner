@@ -159,19 +159,25 @@
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
     const payload = {
       system_instruction: {
-        parts: [{ text: "You are an expert Pokemon card identifier. Analyze the card image and respond ONLY in valid JSON matching the schema. Never include markdown blocks or conversational text." }]
+        parts: [{ text: "You are an expert Pokemon card identifier. Read the bottom-left corner of the card to find the set code box and card number. Respond ONLY in valid JSON matching the schema." }]
       },
       contents: [{
         parts: [
           {
             text: `Analyze this Pokemon card.
+Look closely at the bottom-left corner:
+1. Find the SET CODE printed inside the small black/white box (e.g. "cs5.5C", "SV6", "MEW", "SVI", "PAL", "SFA", "OBF", "TEF", "sv1", "s8b", "sv2a").
+2. Find the CARD NUMBER in format "XXX/YYY" or "XXX" (e.g. "014/066", "130/193", "069/264", "120/101", "200/165").
+3. Find the CARD NAME (English and as printed).
+
 Return JSON:
 {
-  "name": string (Card name as printed, e.g. "Blastoise", "水箭龟", "Turtok", "Paldea-Suelord ex"),
+  "name": string (Card name as printed, e.g. "Blastoise", "水箭龟", "Turtok"),
   "name_en": string (English Pokemon name, e.g. "Blastoise", "Paldean Clodsire ex", "Iron Treads ex"),
   "name_de": string or null (German name if known, e.g. "Turtok", "Eisenrad ex"),
-  "set_name": string (Set or expansion, e.g. "CS5.5C", "151", "Fusion Strike", "Paldea Evolved"),
-  "number": string (Exact card number printed on bottom, e.g. "014/066", "130/193", "069/264", "200/165"),
+  "set_code": string (The exact letters in the bottom-left set box, e.g. "cs5.5C", "SV6", "MEW", "SVI", "PAL", "SFA"),
+  "set_name": string (Set or expansion name),
+  "number": string (Exact card number printed on bottom, e.g. "014/066", "130/193", "069/264"),
   "rarity": string (e.g. "Holo Rare", "Rare", "Double Rare", "Special Illustration Rare", "Art Rare"),
   "language": string ("DE", "EN", "JP", "CN", "FR")
 }`
@@ -221,6 +227,7 @@ Return JSON:
       name: name,
       name_en: parsed.name_en || name,
       name_de: parsed.name_de || name,
+      set_code: parsed.set_code || '',
       set_name: parsed.set_name || parsed.setName || parsed.set || 'Pokémon TCG',
       number: parsed.number || parsed.card_number || parsed.cardNumber || '',
       rarity: parsed.rarity || 'Card',
@@ -253,23 +260,35 @@ Return JSON:
     const candidates = [];
     const displayName = geminiCard?.name_de || geminiCard?.name || '';
     const englishName = geminiCard?.name_en || geminiCard?.name || displayName;
+    const setCode = geminiCard?.set_code || '';
     const numStr = geminiCard?.number || '';
     const numOnly = numStr ? numStr.split('/')[0].replace(/^0+/, '') : '';
 
     const searchTarget = englishName || displayName || auctionHint || 'Pokémon Karte';
     const numClean = numStr.replace(/\s+/g, '');
-    const sQuery = `${searchTarget} ${numClean}`.trim();
-    const tcgData = computeTCGplayerData(searchTarget, numClean, geminiCard?.set_name || '', null);
+
+    // Precise Cardmarket Search String using Set Code Box (e.g. "cs5.5C 014/066" or "SV6 120/101")
+    let cardmarketSearch = '';
+    if (setCode && numClean) {
+      cardmarketSearch = `${setCode} ${numClean}`.trim();
+    } else if (englishName && numClean) {
+      cardmarketSearch = `${englishName} ${numClean}`.trim();
+    } else {
+      cardmarketSearch = `${searchTarget} ${numClean}`.trim();
+    }
+
+    const tcgData = computeTCGplayerData(searchTarget, numClean, geminiCard?.set_name || setCode, null);
 
     // Primary Exact Match Candidate (#1) directly from Visual AI
     const primaryCandidate = {
       id: `hero_match_${Date.now()}`,
-      card_id: `/Pokemon/Search/${encodeURIComponent(searchTarget)}`,
+      card_id: `/Pokemon/Search/${encodeURIComponent(cardmarketSearch)}`,
       name: (geminiCard?.name_de && geminiCard.name !== geminiCard.name_de)
         ? `${geminiCard.name_de} (${geminiCard.name})`
         : (geminiCard?.name_en && geminiCard.name !== geminiCard.name_en ? `${geminiCard.name} (${geminiCard.name_en})` : displayName),
-      set_name: geminiCard?.set_name || 'Pokémon TCG',
+      set_name: geminiCard?.set_name || setCode || 'Pokémon TCG',
       number: numClean,
+      set_code: setCode,
       rarity: geminiCard?.rarity || 'Holo Rare',
       language: geminiCard?.language || 'DE',
       seller_country: 'DE',
@@ -281,8 +300,9 @@ Return JSON:
       tcgplayer_price_usd: tcgData.market_price_usd,
       tcgplayer_url: tcgData.tcgplayer_url,
       match_score: 99,
-      image_url: capturedThumb, // Always show the exact scanned card image!
-      cardmarket_url: `https://www.cardmarket.com/de/Pokemon/Products/Search?searchString=${encodeURIComponent(sQuery)}`,
+      image_url: capturedThumb,
+      cardmarket_search: cardmarketSearch,
+      cardmarket_url: `https://www.cardmarket.com/de/Pokemon/Products/Search?searchString=${encodeURIComponent(cardmarketSearch)}`,
       scanned_at: null
     };
 
