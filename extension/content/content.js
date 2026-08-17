@@ -259,10 +259,18 @@
       const data = await res.json();
       console.log('[Card Scanner+] AI Backend response:', data);
 
-      const candidateList = Array.isArray(data.candidates) ? data.candidates : [];
+      let candidateList = [];
+      if (Array.isArray(data.candidates)) {
+        candidateList = data.candidates;
+      } else if (Array.isArray(data.candidates?.candidates)) {
+        candidateList = data.candidates.candidates;
+      } else if (Array.isArray(data.result?.candidates)) {
+        candidateList = data.result.candidates;
+      }
+
       const firstCand = candidateList[0];
       const detectedTitle = firstCand ? `${firstCand.name} (${firstCand.number || firstCand.set_name || ''})` : null;
-      const isMissingKey = data.status === 'NO_API_KEY';
+      const isMissingKey = data.status === 'NO_API_KEY' || data.candidates?.status === 'NO_API_KEY';
 
       if (window.cardScannerOverlay) {
         window.cardScannerOverlay.showCandidates(candidateList, 0, {
@@ -270,7 +278,7 @@
           capturedThumbnail: imageBase64,
           currentBid: currentLiveBid,
           missingApiKey: isMissingKey,
-          apiMessage: data.apiMessage
+          apiMessage: data.apiMessage || data.candidates?.apiMessage
         });
       }
     } catch (err) {

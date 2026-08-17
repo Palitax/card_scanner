@@ -34,7 +34,7 @@ export async function matchCandidates(params = {}) {
 
   if (searchKey) {
     const cached = memoryCache.get(searchKey);
-    if (cached) {
+    if (cached && Array.isArray(cached) && cached.length > 0) {
       console.log(`[Card Matcher] Cache Hit for '${searchKey}' (${cached.length} candidates)`);
       return { candidates: cached, status: 'SUCCESS', apiStatus, apiMessage };
     }
@@ -159,33 +159,32 @@ export async function matchCandidates(params = {}) {
     }
   }
 
-  // C. ALWAYS GENERATE CANDIDATE FROM GEMINI VISION (Even if not in local Supabase DB!)
-  if (geminiCard && geminiCard.card_name) {
-    const displayName = geminiCard.card_name_de || geminiCard.card_name;
-    const numStr = geminiCard.full_number_code || geminiCard.card_number || '';
-    const searchString = `${displayName} ${numStr}`.trim();
+  // C. ALWAYS GENERATE CANDIDATE FROM GEMINI VISION OR QUERY!
+  const finalDisplayName = geminiCard?.card_name_de || geminiCard?.card_name || query || null;
 
-    if (!candidateMap.has('gemini_direct_match') && candidateMap.size === 0) {
-      candidateMap.set('gemini_direct_match', {
-        id: `ai_match_${Date.now()}`,
-        card_id: `/Pokemon/Search/${encodeURIComponent(displayName)}`,
-        name: displayName,
-        set_name: geminiCard.set_name || 'Pokémon TCG',
-        number: numStr,
-        rarity: geminiCard.rarity || 'Rare',
-        language: (geminiCard.language || 'DE').toUpperCase(),
-        seller_country: 'DE',
-        condition: 'NM',
-        price_trend: null,
-        price_psa10: null,
-        price_psa9: null,
-        match_score: 99,
-        image_url: null,
-        cardmarket_url: `https://www.cardmarket.com/de/Pokemon/Products/Search?searchString=${encodeURIComponent(searchString)}`,
-        scanned_at: null,
-        gemini_meta: geminiCard
-      });
-    }
+  if (candidateMap.size === 0 && finalDisplayName && finalDisplayName.toLowerCase() !== 'null') {
+    const numStr = geminiCard?.full_number_code || geminiCard?.card_number || number || '';
+    const searchString = `${finalDisplayName} ${numStr}`.trim();
+
+    candidateMap.set('gemini_direct_match', {
+      id: `ai_match_${Date.now()}`,
+      card_id: `/Pokemon/Search/${encodeURIComponent(finalDisplayName)}`,
+      name: finalDisplayName,
+      set_name: geminiCard?.set_name || 'Pokémon TCG',
+      number: numStr,
+      rarity: geminiCard?.rarity || 'Ultra Rare',
+      language: (geminiCard?.language || 'DE').toUpperCase(),
+      seller_country: 'DE',
+      condition: 'NM',
+      price_trend: null,
+      price_psa10: null,
+      price_psa9: null,
+      match_score: 99,
+      image_url: null,
+      cardmarket_url: `https://www.cardmarket.com/de/Pokemon/Products/Search?searchString=${encodeURIComponent(searchString)}`,
+      scanned_at: null,
+      gemini_meta: geminiCard
+    });
   }
 
   const candidates = Array.from(candidateMap.values());
@@ -195,9 +194,9 @@ export async function matchCandidates(params = {}) {
   }
 
   return {
-    candidates,
+    candidates: candidates,
     status: candidates.length > 0 ? 'SUCCESS' : (apiStatus !== 'OK' ? apiStatus : 'NO_MATCH'),
-    apiStatus,
-    apiMessage
+    apiStatus: apiStatus,
+    apiMessage: apiMessage
   };
 }
