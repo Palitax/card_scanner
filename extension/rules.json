@@ -17,58 +17,8 @@
       ]
     },
     "condition": {
-      "urlFilter": "amazonaws.com",
-      "resourceTypes": ["xmlhttprequest", "image", "other"]
-    }
-  },
-  {
-    "id": 2,
-    "priority": 1,
-    "action": {
-      "type": "modifyHeaders",
-      "requestHeaders": [
-        {
-          "header": "referer",
-          "operation": "set",
-          "value": "https://www.cardmarket.com/"
-        },
-        {
-          "header": "origin",
-          "operation": "remove"
-        }
-      ]
-    },
-    "condition": {
-      "urlFilter": "cloudfront.net",
-      "resourceTypes": ["xmlhttprequest", "image", "other"]
-    }
-  },
-  {
-    "id": 3,
-    "priority": 2,
-    "action": {
-      "type": "modifyHeaders",
-      "responseHeaders": [
-        {
-          "header": "access-control-allow-origin",
-          "operation": "set",
-          "value": "*"
-        },
-        {
-          "header": "access-control-allow-headers",
-          "operation": "set",
-          "value": "*"
-        },
-        {
-          "header": "access-control-allow-methods",
-          "operation": "set",
-          "value": "GET, HEAD, OPTIONS"
-        }
-      ]
-    },
-    "condition": {
-      "urlFilter": "*",
-      "resourceTypes": ["media", "xmlhttprequest", "other", "image"]
+      "urlFilter": "static.cardmarket.com",
+      "resourceTypes": ["image", "xmlhttprequest"]
     }
   }
 ]
