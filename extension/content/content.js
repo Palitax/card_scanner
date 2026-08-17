@@ -1,10 +1,10 @@
 /**
  * Card Scanner+ Content Script (Master Orchestrator)
- * Pixel-Perfect Viewfinder Slicer, Continuous Auto-Scan (Hotkey 'A') & Gemini AI Client
+ * Grabs the exact inner tracked card boundary on 'S' keypress
  */
 
 (function () {
-  console.log('[Card Scanner+] Content Script with Auto-Scan & Hotkey A loaded.');
+  console.log('[Card Scanner+] Content Script with Camera-Style Card Tracking loaded.');
 
   let backendUrl = 'https://cardscanner-nine.vercel.app';
   let hotkeyChar = 's';
@@ -21,7 +21,7 @@
     }
   });
 
-  // 2. Locate Active Whatnot Video Stream & Attach Viewfinder
+  // 2. Locate Active Whatnot Video Stream & Attach Tracker
   function setupStreamTracker() {
     const videos = Array.from(document.querySelectorAll('video'));
     for (const v of videos) {
@@ -30,7 +30,7 @@
         if (activeVideo !== v) {
           activeVideo = v;
           if (window.cardTracker) {
-            console.log('[Card Scanner+] Initializing Pixel-Perfect Viewfinder on video...');
+            console.log('[Card Scanner+] Attaching Camera-Style Autofocus Tracker to stream...');
             window.cardTracker.init(activeVideo);
           }
         }
@@ -123,29 +123,16 @@
 
     if (isInputActive) return;
 
-    // Hotkey S: Single Scan
     if (e.key && e.key.toLowerCase() === hotkeyChar.toLowerCase()) {
       e.preventDefault();
       console.log(`[Card Scanner+] Hotkey '${e.key}' triggered capture.`);
-      performAICapture(false);
-    }
-
-    // Hotkey A: Toggle Auto-Scan ON / OFF
-    if (e.key && e.key.toLowerCase() === 'a') {
-      e.preventDefault();
-      if (window.cardTracker) {
-        window.cardTracker.toggleAutoScan();
-      }
+      performAICapture();
     }
   }, true);
 
   if (window.cardScannerOverlay) {
     window.cardScannerOverlay.onCaptureClick = () => {
-      performAICapture(false);
-    };
-
-    window.cardScannerOverlay.onToggleAutoScan = () => {
-      if (window.cardTracker) window.cardTracker.toggleAutoScan();
+      performAICapture();
     };
 
     window.cardScannerOverlay.onManualSearch = (query) => {
@@ -153,19 +140,14 @@
     };
   }
 
-  // Expose function for Auto-Scan loop
-  window.cardScannerTriggerCapture = (isAuto = false) => {
-    return performAICapture(isAuto);
-  };
-
   /**
-   * Captures the exact Viewfinder Box Frame & Sends to Gemini AI Vision Backend
+   * Captures the exact Tracked Card Reticle Boundary & Sends to Gemini AI Vision Backend
    */
-  async function performAICapture(isAuto = false) {
+  async function performAICapture() {
     if (isCapturing) return;
     isCapturing = true;
 
-    if (window.cardScannerOverlay && !isAuto) {
+    if (window.cardScannerOverlay) {
       window.cardScannerOverlay.setScanning(true);
     }
 
@@ -173,20 +155,20 @@
       setupStreamTracker();
       const auctionHint = getWhatnotLiveAuctionHint();
       const currentLiveBid = getCurrentWhatnotBid();
-      console.log('[Card Scanner+] Capture Initiated:', { isAuto, auctionHint, currentLiveBid });
+      console.log('[Card Scanner+] Capture of Tracked Card Initiated:', { auctionHint, currentLiveBid });
 
-      const imageBase64 = await grabPixelPerfectBoxImage();
+      const imageBase64 = await grabTrackedCardImage();
 
       if (!imageBase64 && !auctionHint) {
-        throw new Error('Kein Videobild im Zielbereich verfügbar.');
+        throw new Error('Kein Videobild der getrackten Karte verfügbar.');
       }
 
-      console.log('[Card Scanner+] Sending clean 500x700px Card Image to Backend...');
+      console.log('[Card Scanner+] Sending tight 500x700px Card Image to Gemini Vision...');
 
       await queryAIBackend(imageBase64, auctionHint, currentLiveBid);
     } catch (err) {
       console.error('[Card Scanner+] Capture error:', err);
-      if (window.cardScannerOverlay && !isAuto) {
+      if (window.cardScannerOverlay) {
         window.cardScannerOverlay.showCandidates([], 0, {
           errorMessage: err.message
         });
@@ -197,9 +179,9 @@
   }
 
   /**
-   * High-Resolution Pixel-Perfect Viewport Coordinate Slicer
+   * Slices the exact inner tracked card boundary
    */
-  async function grabPixelPerfectBoxImage() {
+  async function grabTrackedCardImage() {
     return new Promise((resolve) => {
       chrome.runtime.sendMessage({ action: 'CAPTURE_TAB_FRAME' }, (response) => {
         if (!response || !response.success || !response.dataUrl) {
@@ -210,15 +192,15 @@
         img.onload = () => {
           const dpr = window.devicePixelRatio || 1;
           
-          let boxRect = window.cardTracker ? window.cardTracker.getBoxRect() : null;
-          if (!boxRect) {
-            boxRect = { left: window.innerWidth * 0.2, top: window.innerHeight * 0.15, width: window.innerWidth * 0.6, height: window.innerHeight * 0.65 };
+          let cardRect = window.cardTracker ? window.cardTracker.getTrackedCardRect() : null;
+          if (!cardRect) {
+            cardRect = { left: window.innerWidth * 0.25, top: window.innerHeight * 0.2, width: window.innerWidth * 0.5, height: window.innerHeight * 0.6 };
           }
 
-          const sx = Math.max(0, Math.round(boxRect.left * dpr));
-          const sy = Math.max(0, Math.round(boxRect.top * dpr));
-          const sw = Math.min(img.width - sx, Math.round(boxRect.width * dpr));
-          const sh = Math.min(img.height - sy, Math.round(boxRect.height * dpr));
+          const sx = Math.max(0, Math.round(cardRect.left * dpr));
+          const sy = Math.max(0, Math.round(cardRect.top * dpr));
+          const sw = Math.min(img.width - sx, Math.round(cardRect.width * dpr));
+          const sh = Math.min(img.height - sy, Math.round(cardRect.height * dpr));
 
           if (sw <= 10 || sh <= 10) {
             return resolve(null);
