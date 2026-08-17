@@ -161,18 +161,22 @@
 
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
     const payload = {
+      system_instruction: {
+        parts: [{ text: "You are an expert Pokemon card identifier. Analyze the card image and respond ONLY in valid JSON matching the schema. Never include markdown blocks or conversational text." }]
+      },
       contents: [{
         parts: [
           {
-            text: `You are an expert Pokemon card identifier. Analyze this card.
+            text: `Analyze this Pokemon card.
 Return JSON:
 {
-  "name": string (Card name, e.g. "Paldea-Suelord ex", "Mew V", "Eisenrad ex", "Venonat"),
-  "name_de": string or null,
-  "set_name": string (e.g. "Paldea Evolved", "Fusion Strike", "Scarlet & Violet"),
-  "number": string (e.g. "130/193", "069/264", "066/198"),
-  "rarity": string (e.g. "Double Rare", "Ultra Rare", "Art Rare", "Holo"),
-  "language": "DE" | "EN" | "JP"
+  "name": string (Card name, e.g. "Blastoise", "水箭龟", "Turtok", "Paldea-Suelord ex"),
+  "name_en": string (English Pokemon name, e.g. "Blastoise", "Paldean Clodsire ex", "Iron Treads ex"),
+  "name_de": string or null (German name if known, e.g. "Turtok", "Eisenrad ex"),
+  "set_name": string (Set or expansion, e.g. "CS5.5C", "151", "Fusion Strike", "Paldea Evolved"),
+  "number": string (e.g. "014/066", "130/193", "069/264"),
+  "rarity": string (e.g. "Rare", "Double Rare", "Ultra Rare", "Art Rare"),
+  "language": string ("DE", "EN", "JP", "CN", "FR")
 }`
           },
           {
@@ -186,7 +190,7 @@ Return JSON:
       generationConfig: {
         response_mime_type: 'application/json',
         temperature: 0.0,
-        max_output_tokens: 160
+        max_output_tokens: 800
       }
     };
 
@@ -213,15 +217,16 @@ Return JSON:
       return null;
     }
 
-    const name = parsed.name_de || parsed.card_name_de || parsed.name || parsed.card_name || parsed.title || null;
+    const name = parsed.name_de || parsed.name || parsed.name_en || parsed.card_name || parsed.title || null;
     if (!name || name === 'null') return null;
 
     return {
       name: name,
-      name_de: parsed.name_de || parsed.card_name_de || name,
+      name_en: parsed.name_en || name,
+      name_de: parsed.name_de || name,
       set_name: parsed.set_name || parsed.setName || parsed.set || 'Pokémon TCG',
       number: parsed.number || parsed.card_number || parsed.cardNumber || '',
-      rarity: parsed.rarity || 'Ultra Rare',
+      rarity: parsed.rarity || 'Card',
       language: (parsed.language || 'DE').toUpperCase()
     };
   }
@@ -250,18 +255,19 @@ Return JSON:
   async function resolveCandidates(geminiCard, auctionHint = '') {
     const candidateMap = new Map();
     const displayName = geminiCard?.name_de || geminiCard?.name || '';
+    const englishName = geminiCard?.name_en || geminiCard?.name || displayName;
     const numStr = geminiCard?.number || '';
     const numOnly = numStr ? numStr.split('/')[0].replace(/^0+/, '') : '';
 
     const searchTerms = [];
     if (displayName) searchTerms.push(displayName);
-    if (geminiCard?.name && geminiCard.name !== displayName) searchTerms.push(geminiCard.name);
+    if (englishName && englishName !== displayName) searchTerms.push(englishName);
     if (numOnly) searchTerms.push(numOnly);
     if (auctionHint) searchTerms.push(auctionHint);
 
-    const cleanTerms = Array.from(new Set(searchTerms.filter(t => t && t.length >= 2)));
+    const cleanTerms = Array.from(new Set(searchTerms.filter(t => t && t.length >= 2 && !/[\u4e00-\u9fa5]/.test(t))));
 
-    // 1. Direct Supabase Query
+    // 1. Direct Supabase Query (for Latin terms)
     if (cleanTerms.length > 0) {
       try {
         const filters = cleanTerms.map(t => `card_id.ilike.%${encodeURIComponent(t)}%`).join(',');
@@ -290,7 +296,7 @@ Return JSON:
 
           const details = parseCardDetails(row.card_id);
           const basePrice = parseFloat(row.price) || null;
-          const tcgData = computeTCGplayerData(geminiCard?.name || details.name || displayName, details.number || numStr, details.setName, basePrice);
+          const tcgData = computeTCGplayerData(englishName || details.name || displayName, details.number || numStr, details.setName, basePrice);
 
           candidateMap.set(row.card_id, {
             id: `sb_match_${candidateMap.size}_${Date.now()}`,
@@ -319,19 +325,20 @@ Return JSON:
       }
     }
 
-    // 2. Guaranteed Hero Match if no DB match
-    if (candidateMap.size === 0 && (displayName || auctionHint)) {
-      const finalName = displayName || auctionHint;
-      const sQuery = `${finalName} ${numStr}`.trim();
-      const tcgData = computeTCGplayerData(finalName, numStr, geminiCard?.set_name || '', null);
+    // 2. Guaranteed Hero Match (Always generated!)
+    if (candidateMap.size === 0 && (displayName || englishName || auctionHint)) {
+      const finalName = displayName || englishName || auctionHint;
+      const searchTarget = englishName || finalName;
+      const sQuery = `${searchTarget} ${numStr}`.trim();
+      const tcgData = computeTCGplayerData(searchTarget, numStr, geminiCard?.set_name || '', null);
 
       candidateMap.set('gemini_direct_match', {
         id: `hero_match_${Date.now()}`,
-        card_id: `/Pokemon/Search/${encodeURIComponent(finalName)}`,
-        name: finalName,
+        card_id: `/Pokemon/Search/${encodeURIComponent(searchTarget)}`,
+        name: geminiCard?.name_en && geminiCard.name_en !== displayName ? `${displayName} (${geminiCard.name_en})` : finalName,
         set_name: geminiCard?.set_name || 'Pokémon TCG',
         number: numStr,
-        rarity: geminiCard?.rarity || 'Ultra Rare',
+        rarity: geminiCard?.rarity || 'Rare',
         language: geminiCard?.language || 'DE',
         seller_country: 'DE',
         condition: 'NM',
