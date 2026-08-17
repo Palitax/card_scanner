@@ -1,127 +1,44 @@
 /**
- * Card Scanner+ Content Script (Master Orchestrator)
- * Grabs the exact inner tracked card boundary on 'S' keypress
+ * Card Scanner+ Content Script
+ * High-Speed Live Stream Reticle Tracking, Turbo Direct-Vision AI & TCGplayer Pricing
  */
 
 (function () {
-  console.log('[Card Scanner+] Content Script with Camera-Style Card Tracking loaded.');
+  console.log('[Card Scanner+] Content script active on Whatnot stream.');
 
   let backendUrl = 'https://cardscanner-nine.vercel.app';
+  let isCapturing = false;
   let hotkeyChar = 's';
   let geminiApiKey = '';
-  let isCapturing = false;
-  let activeVideo = null;
 
-  // 1. Fetch user configuration
-  chrome.runtime.sendMessage({ action: 'GET_CONFIG' }, (resp) => {
-    if (resp && resp.success && resp.config) {
-      if (resp.config.backendUrl) backendUrl = resp.config.backendUrl.replace(/\/+$/, '');
-      if (resp.config.hotkey) hotkeyChar = resp.config.hotkey.toLowerCase();
-      if (resp.config.geminiApiKey) geminiApiKey = resp.config.geminiApiKey.trim();
-    }
+  // Load User Preferences
+  chrome.storage.local.get(['backendUrl', 'hotkey', 'geminiApiKey'], (data) => {
+    if (data.backendUrl) backendUrl = data.backendUrl.replace(/\/+$/, '');
+    if (data.hotkey) hotkeyChar = data.hotkey.toLowerCase();
+    if (data.geminiApiKey) geminiApiKey = data.geminiApiKey.trim();
   });
 
-  // 2. Locate Active Whatnot Video Stream & Attach Tracker
+  // Watch for dynamic video element on Whatnot Stream
+  const streamObserver = new MutationObserver(() => {
+    setupStreamTracker();
+  });
+
+  streamObserver.observe(document.body, { childList: true, subtree: true });
+  setTimeout(setupStreamTracker, 1000);
+
   function setupStreamTracker() {
-    const videos = Array.from(document.querySelectorAll('video'));
-    for (const v of videos) {
-      const rect = v.getBoundingClientRect();
-      if (rect.width > 150 && rect.height > 150 && !v.paused && v.readyState >= 2) {
-        if (activeVideo !== v) {
-          activeVideo = v;
-          if (window.cardTracker) {
-            console.log('[Card Scanner+] Attaching Camera-Style Autofocus Tracker to stream...');
-            window.cardTracker.init(activeVideo);
-          }
-        }
-        return activeVideo;
-      }
+    const video = document.querySelector('video');
+    if (video && window.cardTracker && !document.getElementById('cardscanner-tracker-layer')) {
+      window.cardTracker.init(video);
+      console.log('[Card Scanner+] Attached precision card viewfinder to stream video.');
     }
-    return activeVideo || videos[0];
   }
 
-  setInterval(setupStreamTracker, 1500);
-
-  // 3. Scrape Current Whatnot Live Bid Amount (€)
-  function getCurrentWhatnotBid() {
-    try {
-      const bidSelectors = [
-        '[data-testid*="current-bid"]',
-        '[data-testid*="auction-price"]',
-        '.live-auction-bid',
-        '[class*="CurrentBid"]',
-        '[class*="PriceDisplay"]',
-        'div[class*="bid-amount"]'
-      ];
-
-      for (const sel of bidSelectors) {
-        const el = document.querySelector(sel);
-        if (el && el.innerText) {
-          const match = el.innerText.match(/(\d+(?:[.,]\d{1,2})?)\s*(?:€|EUR|\$)?/);
-          if (match) {
-            const val = parseFloat(match[1].replace(',', '.'));
-            if (!isNaN(val) && val > 0) return val;
-          }
-        }
-      }
-
-      const buttons = document.querySelectorAll('button, div');
-      for (const btn of buttons) {
-        if (btn.innerText && (btn.innerText.includes('Gebot:') || btn.innerText.includes('Bid:') || btn.innerText.includes('Aktuell:'))) {
-          const m = btn.innerText.match(/(?:Gebot|Bid|Aktuell)[:\s]+(\d+(?:[.,]\d{1,2})?)/i);
-          if (m) {
-            const val = parseFloat(m[1].replace(',', '.'));
-            if (!isNaN(val) && val > 0) return val;
-          }
-        }
-      }
-    } catch (e) {}
-    return null;
-  }
-
-  // 4. Scrape Whatnot Active Auction / Pinned Item Text
-  function getWhatnotLiveAuctionHint() {
-    try {
-      const selectors = [
-        '[data-testid*="pinned-item"]',
-        '[data-testid*="auction-item"]',
-        '.live-auction-item',
-        '[class*="ItemOnScreen"]',
-        '[class*="AuctionCard"]',
-        'div[class*="pinned"]'
-      ];
-
-      for (const sel of selectors) {
-        const el = document.querySelector(sel);
-        if (el && el.innerText && el.innerText.trim().length > 3) {
-          return el.innerText.trim();
-        }
-      }
-
-      const allDivs = document.querySelectorAll('div');
-      for (const div of allDivs) {
-        if (div.innerText && (div.innerText.includes('(sv') || div.innerText.includes('151') || div.innerText.includes('GX') || div.innerText.includes('ex'))) {
-          if (div.children.length < 5 && div.innerText.length < 100) {
-            return div.innerText.trim();
-          }
-        }
-      }
-    } catch (e) {}
-    return null;
-  }
-
-  // 5. Hotkey Listener with Chat-Guard
+  // Keyboard Shortcuts: 'S' for Instant Capture
   window.addEventListener('keydown', (e) => {
-    const activeEl = document.activeElement;
-    const isInputActive = activeEl && (
-      activeEl.tagName === 'INPUT' ||
-      activeEl.tagName === 'TEXTAREA' ||
-      activeEl.isContentEditable ||
-      activeEl.getAttribute('role') === 'textbox' ||
-      activeEl.closest('.chat-input, [data-testid*="chat"], .whatnot-chat')
-    );
-
-    if (isInputActive) return;
+    if (['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName) || document.activeElement?.isContentEditable) {
+      return;
+    }
 
     if (e.key && e.key.toLowerCase() === hotkeyChar.toLowerCase()) {
       e.preventDefault();
@@ -136,7 +53,7 @@
     };
 
     window.cardScannerOverlay.onSaveApiKey = (key) => {
-      geminiApiKey = key;
+      geminiApiKey = key.trim();
       console.log('[Card Scanner+] Gemini API Key updated directly from Overlay.');
     };
 
@@ -146,11 +63,12 @@
   }
 
   /**
-   * Captures the exact Tracked Card Reticle Boundary & Sends to Gemini AI Vision Backend
+   * Captures the exact Tracked Card Reticle Boundary & Runs Turbo AI Vision Scan
    */
   async function performAICapture() {
     if (isCapturing) return;
     isCapturing = true;
+    const scanStartTime = performance.now();
 
     if (window.cardScannerOverlay) {
       window.cardScannerOverlay.setScanning(true);
@@ -160,17 +78,37 @@
       setupStreamTracker();
       const auctionHint = getWhatnotLiveAuctionHint();
       const currentLiveBid = getCurrentWhatnotBid();
-      console.log('[Card Scanner+] Capture of Tracked Card Initiated:', { auctionHint, currentLiveBid });
 
+      // Ultra-optimized lightweight card crop (380x532px @ 0.70 JPEG)
       const imageBase64 = await grabTrackedCardImage();
 
       if (!imageBase64 && !auctionHint) {
         throw new Error('Kein Videobild der getrackten Karte verfügbar.');
       }
 
-      console.log('[Card Scanner+] Sending tight 500x700px Card Image to Gemini Vision...');
+      console.log('[Card Scanner+] Ultra-Fast AI Capture initiated...');
 
-      await queryAIBackend(imageBase64, auctionHint, currentLiveBid);
+      // TURBO DIRECT-VISION: If API key is present, execute zero-hop direct call to Gemini 2.5 Flash
+      const stored = await chrome.storage.local.get(['geminiApiKey', 'backendUrl']);
+      if (stored.geminiApiKey) geminiApiKey = stored.geminiApiKey.trim();
+      if (stored.backendUrl) backendUrl = stored.backendUrl.replace(/\/+$/, '');
+
+      let geminiCard = null;
+      let latencyMs = 0;
+
+      if (geminiApiKey && imageBase64) {
+        try {
+          const directRes = await performDirectGeminiVision(imageBase64, geminiApiKey);
+          if (directRes && directRes.name) {
+            geminiCard = directRes;
+          }
+        } catch (e) {
+          console.warn('[Card Scanner+] Direct vision fallback to backend:', e.message);
+        }
+      }
+
+      // Query Backend for Cardmarket & TCGplayer Pricing
+      await queryAIBackend(imageBase64, auctionHint, currentLiveBid, geminiCard, scanStartTime);
     } catch (err) {
       console.error('[Card Scanner+] Capture error:', err);
       if (window.cardScannerOverlay) {
@@ -184,7 +122,79 @@
   }
 
   /**
-   * Slices the exact inner tracked card boundary
+   * High-Speed Direct Browser-to-Gemini Call (Zero-Hop Turbo Vision)
+   */
+  async function performDirectGeminiVision(imageBase64, apiKey) {
+    let cleanBase64 = imageBase64;
+    let mimeType = 'image/jpeg';
+    if (imageBase64.startsWith('data:')) {
+      const parts = imageBase64.split(',');
+      const match = parts[0].match(/data:(.*?);base64/);
+      if (match) mimeType = match[1];
+      cleanBase64 = parts[1] || '';
+    }
+
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+    const payload = {
+      contents: [{
+        parts: [
+          {
+            text: `You are an expert Pokemon card identifier. Analyze this card.
+Return JSON:
+{
+  "name": string (Card name, e.g. "Paldea-Suelord ex", "Mew V", "Iron Treads ex"),
+  "name_de": string or null,
+  "set_name": string (e.g. "Paldea Evolved", "Fusion Strike"),
+  "number": string (e.g. "130/193", "069/264"),
+  "rarity": string (e.g. "Double Rare", "Ultra Rare", "Art Rare"),
+  "language": "DE" | "EN" | "JP"
+}`
+          },
+          {
+            inline_data: {
+              mime_type: mimeType,
+              data: cleanBase64
+            }
+          }
+        ]
+      }],
+      generationConfig: {
+        response_mime_type: 'application/json',
+        temperature: 0.0,
+        max_output_tokens: 160
+      }
+    };
+
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    if (!res.ok) {
+      throw new Error(`Gemini Vision HTTP ${res.status}`);
+    }
+
+    const data = await res.json();
+    const txt = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!txt) return null;
+
+    const parsed = JSON.parse(txt);
+    const name = parsed.name_de || parsed.name || parsed.card_name || null;
+    if (!name || name === 'null') return null;
+
+    return {
+      name: name,
+      name_de: parsed.name_de || name,
+      set_name: parsed.set_name || 'Pokémon TCG',
+      number: parsed.number || parsed.card_number || '',
+      rarity: parsed.rarity || 'Ultra Rare',
+      language: (parsed.language || 'DE').toUpperCase()
+    };
+  }
+
+  /**
+   * Slices the exact inner tracked card boundary (Optimized 380x532px for max speed)
    */
   async function grabTrackedCardImage() {
     return new Promise((resolve) => {
@@ -212,15 +222,15 @@
           }
 
           const canvas = document.createElement('canvas');
-          canvas.width = 500;
-          canvas.height = 700;
+          canvas.width = 380;
+          canvas.height = 532;
           const ctx = canvas.getContext('2d');
           ctx.imageSmoothingEnabled = true;
-          ctx.imageSmoothingQuality = 'high';
+          ctx.imageSmoothingQuality = 'medium';
 
-          ctx.drawImage(img, sx, sy, sw, sh, 0, 0, 500, 700);
+          ctx.drawImage(img, sx, sy, sw, sh, 0, 0, 380, 532);
 
-          resolve(canvas.toDataURL('image/jpeg', 0.85));
+          resolve(canvas.toDataURL('image/jpeg', 0.70));
         };
         img.onerror = () => resolve(null);
         img.src = response.dataUrl;
@@ -229,23 +239,22 @@
   }
 
   /**
-   * Queries Vercel Gemini Vision Backend
+   * Queries Vercel Backend for Cardmarket & TCGplayer Pricing
    */
-  async function queryAIBackend(imageBase64, auctionHint, currentLiveBid) {
+  async function queryAIBackend(imageBase64, auctionHint, currentLiveBid, directGeminiCard = null, scanStartTime = 0) {
     try {
-      const stored = await chrome.storage.local.get(['geminiApiKey', 'backendUrl']);
-      if (stored.geminiApiKey) geminiApiKey = stored.geminiApiKey.trim();
-      if (stored.backendUrl) backendUrl = stored.backendUrl.replace(/\/+$/, '');
-
       const endpoint = `${backendUrl}/api/search-candidates`;
+      const queryStr = directGeminiCard ? `${directGeminiCard.name} ${directGeminiCard.number}`.trim() : '';
+
       const payload = {
-        imageBase64: imageBase64,
+        imageBase64: directGeminiCard ? null : imageBase64, // Only send image if direct vision was not performed
         customApiKey: geminiApiKey,
+        query: queryStr,
         auctionHint: auctionHint || '',
         currentBid: currentLiveBid
       };
 
-      console.log(`[Card Scanner+] Fetching from ${endpoint}...`);
+      console.log(`[Card Scanner+] Fetching prices from ${endpoint}...`);
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -257,7 +266,8 @@
       }
 
       const data = await res.json();
-      console.log('[Card Scanner+] AI Backend response:', data);
+      const totalLatency = scanStartTime > 0 ? Math.round(performance.now() - scanStartTime) : 0;
+      console.log(`[Card Scanner+] Scan completed in ${totalLatency}ms:`, data);
 
       let candidateList = [];
       if (Array.isArray(data.candidates)) {
@@ -266,6 +276,26 @@
         candidateList = data.candidates.candidates;
       } else if (Array.isArray(data.result?.candidates)) {
         candidateList = data.result.candidates;
+      }
+
+      // If directGeminiCard exists and candidateList is empty, create instant hero candidate
+      if (candidateList.length === 0 && directGeminiCard) {
+        const numStr = directGeminiCard.number || '';
+        const sQuery = `${directGeminiCard.name} ${numStr}`.trim();
+        candidateList.push({
+          id: `turbo_match_${Date.now()}`,
+          name: directGeminiCard.name,
+          set_name: directGeminiCard.set_name,
+          number: numStr,
+          rarity: directGeminiCard.rarity,
+          language: directGeminiCard.language,
+          match_score: 99,
+          price_trend: null,
+          tcgplayer_price_usd: null,
+          tcgplayer_url: `https://www.tcgplayer.com/search/pokemon/product?q=${encodeURIComponent(sQuery)}&view=grid`,
+          cardmarket_url: `https://www.cardmarket.com/de/Pokemon/Products/Search?searchString=${encodeURIComponent(sQuery)}`,
+          image_url: null
+        });
       }
 
       const firstCand = candidateList[0];
@@ -278,7 +308,8 @@
           capturedThumbnail: imageBase64,
           currentBid: currentLiveBid,
           missingApiKey: isMissingKey,
-          apiMessage: data.apiMessage || data.candidates?.apiMessage
+          apiMessage: data.apiMessage || data.candidates?.apiMessage,
+          latencyMs: totalLatency
         });
       }
     } catch (err) {
@@ -306,25 +337,54 @@
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: query, customApiKey: geminiApiKey })
+        body: JSON.stringify({ query: query })
       });
 
-      if (res.ok) {
-        const data = await res.json();
-        const candidateList = Array.isArray(data.candidates) ? data.candidates : [];
-        if (window.cardScannerOverlay) {
-          window.cardScannerOverlay.showCandidates(candidateList, 0, {
-            detectedCode: query
-          });
-        }
-      }
-    } catch (err) {
-      console.warn('[Card Scanner+] Manual search warning:', err);
+      const data = await res.json();
+      let candidateList = [];
+      if (Array.isArray(data.candidates)) candidateList = data.candidates;
+      else if (Array.isArray(data.candidates?.candidates)) candidateList = data.candidates.candidates;
+
       if (window.cardScannerOverlay) {
-        window.cardScannerOverlay.showCandidates([], 0, {
+        window.cardScannerOverlay.showCandidates(candidateList, 0, {
           detectedCode: query
         });
       }
+    } catch (e) {
+      console.error('[Card Scanner+] Manual search failed:', e);
     }
+  }
+
+  function getWhatnotLiveAuctionHint() {
+    const selectors = [
+      '[class*="ListingTitle"]',
+      '[class*="listing-title"]',
+      '[data-testid="listing-title"]',
+      'h1[class*="title"]',
+      'h2[class*="title"]',
+      '.live-product-title'
+    ];
+    for (const sel of selectors) {
+      const el = document.querySelector(sel);
+      if (el && el.innerText.trim()) return el.innerText.trim();
+    }
+    return null;
+  }
+
+  function getCurrentWhatnotBid() {
+    const selectors = [
+      '[class*="CurrentBid"]',
+      '[class*="current-bid"]',
+      '[data-testid="current-bid"]',
+      '[class*="BidAmount"]'
+    ];
+    for (const sel of selectors) {
+      const el = document.querySelector(sel);
+      if (el && el.innerText.trim()) {
+        const match = el.innerText.match(/[\d.,]+/);
+        if (match) return parseFloat(match[0].replace(',', '.'));
+      }
+    }
+    return null;
   }
 })();

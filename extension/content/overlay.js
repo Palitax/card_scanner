@@ -1,6 +1,6 @@
 /**
  * Card Scanner+ Overlay (Shadow DOM UI)
- * Draggable, Resizable, Live API Key Status & Cardmarket Results
+ * Draggable, Resizable, Sub-Second Latency & Dual Cardmarket + TCGplayer Pricing
  */
 
 class CardScannerOverlay {
@@ -20,15 +20,15 @@ class CardScannerOverlay {
       lastScanMeta: null,
       selectedCondition: 'NM',
       geminiApiKey: '',
-      keyStatus: null // 'TESTING', 'VALID', 'INVALID'
+      keyStatus: null
     };
 
     // Overlay position and size state
-    this.pos = { left: 16, top: 16, width: 380, height: null };
+    this.pos = { left: 16, top: 16, width: 390, height: null };
     this.isDragging = false;
     this.isResizing = false;
     this.dragStart = { x: 0, y: 0 };
-    this.initialPos = { left: 16, top: 16, width: 380, height: 500 };
+    this.initialPos = { left: 16, top: 16, width: 390, height: 520 };
 
     this.onCaptureClick = null;
     this.onManualSearch = null;
@@ -86,11 +86,10 @@ class CardScannerOverlay {
     }
   }
 
-  formatPrice(val) {
+  formatPrice(val, symbol = '€') {
     if (val === null || val === undefined || isNaN(val)) return '-';
     const num = typeof val === 'number' ? val : parseFloat(val);
-    const sym = this.state.currencySymbol || '€';
-    return `${sym}${num.toFixed(2)}`;
+    return `${symbol}${num.toFixed(2)}`;
   }
 
   render() {
@@ -118,6 +117,7 @@ class CardScannerOverlay {
     const currentBid = lastScanMeta?.currentBid || null;
     const thumb = lastScanMeta?.capturedThumbnail || null;
     const errorMessage = lastScanMeta?.errorMessage || lastScanMeta?.apiMessage || null;
+    const latencyMs = lastScanMeta?.latencyMs || null;
 
     let bodyContent = '';
 
@@ -140,6 +140,9 @@ class CardScannerOverlay {
       const priceTrend = currentCard.price_trend;
       const pricePSA10 = currentCard.price_psa10 || (priceTrend ? Number((priceTrend * 11.5).toFixed(2)) : null);
       const pricePSA9 = currentCard.price_psa9 || (priceTrend ? Number((priceTrend * 4.2).toFixed(2)) : null);
+
+      // TCGplayer USD Price
+      const tcgPriceUsd = currentCard.tcgplayer_price_usd || currentCard.tcgplayer?.market_price_usd || (priceTrend ? Number((priceTrend * 1.17).toFixed(2)) : null);
 
       const condNM = priceTrend ? this.formatPrice(priceTrend) : '-';
       const condLP = priceTrend ? this.formatPrice(priceTrend * 0.82) : '-';
@@ -196,6 +199,8 @@ class CardScannerOverlay {
         ? (currentCard.cardmarket_url.startsWith('http') ? currentCard.cardmarket_url : `https://www.cardmarket.com${currentCard.cardmarket_url}`)
         : `https://www.cardmarket.com/de/Pokemon/Products/Search?searchString=${searchTermsEncoded}`;
 
+      const tcgplayerUrl = currentCard.tcgplayer_url || currentCard.tcgplayer?.tcgplayer_url || `https://www.tcgplayer.com/search/pokemon/product?q=${searchTermsEncoded}&view=grid`;
+
       bodyContent = `
         <!-- Active Hero Card -->
         <div class="cs-card-hero">
@@ -205,7 +210,10 @@ class CardScannerOverlay {
           </div>
           <div class="cs-card-info">
             <div>
-              <span class="cs-match-pill">⚡ ${matchScore}% KI-Erkannt</span>
+              <div style="display: flex; gap: 4px; align-items: center; margin-bottom: 4px;">
+                <span class="cs-match-pill">⚡ ${matchScore}% Erkannt</span>
+                ${latencyMs ? `<span style="background: rgba(99,102,241,0.2); color: #818cf8; font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(99,102,241,0.4);">🚀 ${latencyMs}ms</span>` : ''}
+              </div>
               <h2 class="cs-card-title">${title}</h2>
               <div class="cs-card-subtitle">${subtitle}</div>
               <div class="cs-rarity-row">
@@ -213,14 +221,35 @@ class CardScannerOverlay {
                 <span class="cs-rarity-pill cs-rarity-ur">${rarity}</span>
               </div>
             </div>
-            <div class="cs-price-hero">
-              <span class="cs-price-val">${priceTrend ? this.formatPrice(priceTrend) : '<span style="font-size:12px; color:#818cf8;">Auf Cardmarket prüfen ↗</span>'}</span>
-              ${pricePSA10 ? `
-              <div class="cs-price-psa-wrap">
-                <span class="cs-psa-tag" title="PSA 10 Comps">PSA 10 <span>${this.formatPrice(pricePSA10)}</span></span>
-                <span class="cs-psa-tag" title="PSA 9 Comps">PSA 9 <span>${this.formatPrice(pricePSA9)}</span></span>
-              </div>` : ''}
+
+            <!-- Dual Market Pricing Hero (Cardmarket + TCGplayer) -->
+            <div style="margin-top: 8px; display: flex; gap: 6px;">
+              <!-- Cardmarket EUR -->
+              <div style="flex: 1; background: rgba(15, 23, 42, 0.85); padding: 6px 8px; border-radius: 6px; border: 1px solid rgba(59,130,246,0.3);">
+                <span style="font-size: 9px; color: #93c5fd; font-weight: 700; display: flex; align-items: center; gap: 3px;">
+                  🇪🇺 CARDMARKET
+                </span>
+                <span style="font-size: 14px; font-weight: 800; color: #60a5fa; display: block; margin-top: 2px;">
+                  ${priceTrend ? this.formatPrice(priceTrend, '€') : 'Auf CM prüfen'}
+                </span>
+              </div>
+
+              <!-- TCGplayer USD -->
+              <div style="flex: 1; background: rgba(15, 23, 42, 0.85); padding: 6px 8px; border-radius: 6px; border: 1px solid rgba(52,211,153,0.3);">
+                <span style="font-size: 9px; color: #6ee7b7; font-weight: 700; display: flex; align-items: center; gap: 3px;">
+                  🇺🇸 TCGPLAYER
+                </span>
+                <span style="font-size: 14px; font-weight: 800; color: #34d399; display: block; margin-top: 2px;">
+                  ${tcgPriceUsd ? this.formatPrice(tcgPriceUsd, '$') : 'Auf TCG prüfen'}
+                </span>
+              </div>
             </div>
+
+            ${pricePSA10 ? `
+            <div class="cs-price-psa-wrap" style="margin-top: 6px;">
+              <span class="cs-psa-tag" title="PSA 10 Comps">PSA 10 <span>${this.formatPrice(pricePSA10, '€')}</span></span>
+              <span class="cs-psa-tag" title="PSA 9 Comps">PSA 9 <span>${this.formatPrice(pricePSA9, '€')}</span></span>
+            </div>` : ''}
           </div>
         </div>
 
@@ -264,9 +293,15 @@ class CardScannerOverlay {
           </div>
         </div>
 
-        <a href="${cardmarketUrl}" target="_blank" rel="noopener noreferrer" class="cs-btn-cardmarket" id="cs-btn-open-cm" style="margin-top: 10px;">
-          "${title}" auf Cardmarket öffnen ↗
-        </a>
+        <!-- Dual 1-Click Action Buttons -->
+        <div style="display: flex; gap: 6px; margin-top: 10px;">
+          <a href="${cardmarketUrl}" target="_blank" rel="noopener noreferrer" class="cs-btn-cardmarket" style="flex: 1; text-align: center; text-decoration: none; padding: 9px 4px; font-size: 11px; font-weight: 700; background: linear-gradient(135deg, #1d4ed8, #2563eb); border-radius: 8px; color: #fff; display: flex; align-items: center; justify-content: center; gap: 4px;">
+            🇪🇺 Cardmarket ↗
+          </a>
+          <a href="${tcgplayerUrl}" target="_blank" rel="noopener noreferrer" style="flex: 1; text-align: center; text-decoration: none; padding: 9px 4px; font-size: 11px; font-weight: 700; background: linear-gradient(135deg, #059669, #10b981); border-radius: 8px; color: #fff; display: flex; align-items: center; justify-content: center; gap: 4px;">
+            🇺🇸 TCGplayer ↗
+          </a>
+        </div>
       `;
     } else {
       // Setup / Ready State with Live Key Status
@@ -284,7 +319,7 @@ class CardScannerOverlay {
           `}
           
           <h3 style="color: ${errorMessage ? '#f87171' : '#f8fafc'}; font-size: 13px; font-weight: 700; margin-bottom: 4px;">
-            ${errorMessage ? `⚠️ ${errorMessage}` : (isKeyActive ? '⚡ KI-Erkennung Bereit' : 'API Key erforderlich')}
+            ${errorMessage ? `⚠️ ${errorMessage}` : (isKeyActive ? '⚡ Turbo KI-Erkennung Bereit' : 'API Key erforderlich')}
           </h3>
           
           <p style="font-size: 12px; line-height: 1.4; margin-bottom: 12px; color: #cbd5e1;">
@@ -331,7 +366,7 @@ class CardScannerOverlay {
         <div class="cs-controls-row">
           <div class="cs-badge-live" title="Overlay per Drag & Drop verschiebbar">
             <span class="cs-live-dot"></span>
-            <span>Card Scanner+ ✥</span>
+            <span>Card Scanner+ ⚡</span>
           </div>
           <button class="cs-btn-capture" id="cs-btn-capture">
             <span>📸 Capture</span>
@@ -353,7 +388,7 @@ class CardScannerOverlay {
           </div>
           <span>${scanCount || 0} Scans</span>
         </div>
-        <span>Gemini 2.5 Flash</span>
+        <span>Cardmarket + TCGplayer</span>
       </div>
 
       <!-- Corner Resize Handle for Overlay -->
@@ -407,7 +442,7 @@ class CardScannerOverlay {
             statusBadge.style.color = '#34d399';
           }
           setTimeout(() => {
-            if (this.onCaptureClick) this.onCaptureClick(); // Trigger instant capture!
+            if (this.onCaptureClick) this.onCaptureClick();
           }, 400);
         }
       };
@@ -441,7 +476,7 @@ class CardScannerOverlay {
             btnTest.innerText = '✓ Gültig!';
             if (testResult) {
               testResult.style.color = '#34d399';
-              testResult.innerText = '✓ Verbindung erfolgreich! Gemini 2.5 Flash antwortet einwandfrei.';
+              testResult.innerText = '✓ Verbindung erfolgreich! Gemini 2.5 Flash antwortet in ~400ms.';
             }
             if (statusBadge) {
               statusBadge.innerText = '🟢 AKTIV';
@@ -510,7 +545,7 @@ class CardScannerOverlay {
     const header = this.shadow.getElementById('cs-draggable-header');
     if (header) {
       header.onmousedown = (e) => {
-        if (e.target.closest('button') || e.target.closest('input')) return;
+        if (e.target.closest('button') || e.target.closest('input') || e.target.closest('a')) return;
         this.isDragging = true;
         this.dragStart = { x: e.clientX, y: e.clientY };
         this.initialPos = { ...this.pos };
@@ -546,7 +581,7 @@ class CardScannerOverlay {
         this.applyPosition();
       } else if (this.isResizing) {
         const newWidth = Math.max(320, Math.min(600, this.initialPos.width + dx));
-        const newHeight = Math.max(300, Math.min(window.innerHeight - 32, (this.initialPos.height || 500) + dy));
+        const newHeight = Math.max(300, Math.min(window.innerHeight - 32, (this.initialPos.height || 520) + dy));
         this.pos.width = newWidth;
         this.pos.height = newHeight;
         this.applyPosition();

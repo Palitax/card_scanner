@@ -1,10 +1,11 @@
 /**
  * Card Matcher Service for Card Scanner+
- * Combines Gemini Flash Multimodal Vision AI with Supabase Price Database
+ * Combines Gemini Flash Multimodal Vision AI with Supabase Price Database & TCGplayer Pricing
  */
 
 import { identifyCardWithGemini } from './gemini-vision.js';
 import { searchPriceHistory, searchCardImages, fetchCardImages, parseCardDetailsFromId } from './supabase.js';
+import { getTCGplayerData } from './tcgplayer.js';
 import { memoryCache } from './cache.js';
 
 export async function matchCandidates(params = {}) {
@@ -104,13 +105,16 @@ export async function matchCandidates(params = {}) {
       const details = parseCardDetailsFromId(row.card_id);
       const img = imageMap[row.card_id] || imageMap[row.card_id.replace(/^\/+/, '')] || null;
       const basePrice = parseFloat(row.price) || null;
+      const cName = geminiCard?.card_name_de || details.name || geminiCard?.card_name || 'Pokémon Karte';
+      const cNum = details.number || detectedNumber;
+      const tcgData = getTCGplayerData(geminiCard?.card_name || cName, cNum, details.setName, basePrice);
 
       candidateMap.set(row.card_id, {
         id: `match_${candidateMap.size}_${Date.now()}`,
         card_id: row.card_id,
-        name: geminiCard?.card_name_de || details.name || geminiCard?.card_name || 'Pokémon Karte',
+        name: cName,
         set_name: details.setName || geminiCard?.set_name || 'Pokémon TCG',
-        number: details.number || detectedNumber,
+        number: cNum,
         rarity: geminiCard?.rarity || details.rarity || 'Rare',
         language: (geminiCard?.language || row.language || 'DE').toUpperCase(),
         seller_country: row.seller_country || 'DE',
@@ -118,6 +122,9 @@ export async function matchCandidates(params = {}) {
         price_trend: basePrice,
         price_psa10: basePrice ? Number((basePrice * 11.5).toFixed(2)) : null,
         price_psa9: basePrice ? Number((basePrice * 4.2).toFixed(2)) : null,
+        tcgplayer: tcgData,
+        tcgplayer_price_usd: tcgData?.market_price_usd || null,
+        tcgplayer_url: tcgData?.tcgplayer_url || null,
         match_score: candidateMap.size === 0 ? 99 : Math.max(50, 60 - candidateMap.size * 5),
         image_url: img,
         cardmarket_url: row.card_id.startsWith('http') ? row.card_id : `https://www.cardmarket.com${row.card_id.startsWith('/') ? row.card_id : '/' + row.card_id}`,
@@ -135,12 +142,16 @@ export async function matchCandidates(params = {}) {
       if (candidateMap.has(imgRow.card_id)) continue;
 
       const details = parseCardDetailsFromId(imgRow.card_id);
+      const cName = geminiCard?.card_name_de || details.name || geminiCard?.card_name || 'Pokémon Karte';
+      const cNum = details.number || detectedNumber;
+      const tcgData = getTCGplayerData(geminiCard?.card_name || cName, cNum, details.setName, null);
+
       candidateMap.set(imgRow.card_id, {
         id: `img_match_${candidateMap.size}_${Date.now()}`,
         card_id: imgRow.card_id,
-        name: geminiCard?.card_name_de || details.name || geminiCard?.card_name || 'Pokémon Karte',
+        name: cName,
         set_name: details.setName || geminiCard?.set_name || 'Pokémon Expansion',
-        number: details.number || detectedNumber,
+        number: cNum,
         rarity: geminiCard?.rarity || details.rarity || 'Rare',
         language: (geminiCard?.language || 'DE').toUpperCase(),
         seller_country: 'DE',
@@ -148,6 +159,9 @@ export async function matchCandidates(params = {}) {
         price_trend: null,
         price_psa10: null,
         price_psa9: null,
+        tcgplayer: tcgData,
+        tcgplayer_price_usd: tcgData?.market_price_usd || null,
+        tcgplayer_url: tcgData?.tcgplayer_url || null,
         match_score: candidateMap.size === 0 ? 95 : 55,
         image_url: imgRow.image_url,
         cardmarket_url: `https://www.cardmarket.com/de/Pokemon/Products/Search?searchString=${encodeURIComponent(details.name || geminiCard?.card_name_de || geminiCard?.card_name || '')}`,
@@ -165,6 +179,7 @@ export async function matchCandidates(params = {}) {
   if (candidateMap.size === 0 && finalDisplayName && finalDisplayName.toLowerCase() !== 'null') {
     const numStr = geminiCard?.full_number_code || geminiCard?.card_number || number || '';
     const searchString = `${finalDisplayName} ${numStr}`.trim();
+    const tcgData = getTCGplayerData(geminiCard?.card_name || finalDisplayName, numStr, geminiCard?.set_name || '', null);
 
     candidateMap.set('gemini_direct_match', {
       id: `ai_match_${Date.now()}`,
@@ -179,6 +194,9 @@ export async function matchCandidates(params = {}) {
       price_trend: null,
       price_psa10: null,
       price_psa9: null,
+      tcgplayer: tcgData,
+      tcgplayer_price_usd: tcgData?.market_price_usd || null,
+      tcgplayer_url: tcgData?.tcgplayer_url || null,
       match_score: 99,
       image_url: null,
       cardmarket_url: `https://www.cardmarket.com/de/Pokemon/Products/Search?searchString=${encodeURIComponent(searchString)}`,
