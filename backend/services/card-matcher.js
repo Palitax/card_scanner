@@ -160,7 +160,7 @@ export async function matchCandidates(params = {}) {
   }
 
   // C. ALWAYS GENERATE CANDIDATE FROM GEMINI VISION (Even if not in local Supabase DB!)
-  if (geminiCard && (geminiCard.card_name || geminiCard.card_name_de)) {
+  if (geminiCard && geminiCard.card_name) {
     const displayName = geminiCard.card_name_de || geminiCard.card_name;
     const numStr = geminiCard.full_number_code || geminiCard.card_number || '';
     const searchString = `${displayName} ${numStr}`.trim();
