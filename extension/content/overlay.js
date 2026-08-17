@@ -114,6 +114,7 @@ class CardScannerOverlay {
     const currentBid = lastScanMeta?.currentBid || null;
     const missingApiKey = !geminiApiKey && (!lastScanMeta || lastScanMeta.missingApiKey);
     const thumb = lastScanMeta?.capturedThumbnail || null;
+    const errorMessage = lastScanMeta?.errorMessage || lastScanMeta?.apiMessage || null;
 
     let bodyContent = '';
 
@@ -287,29 +288,33 @@ class CardScannerOverlay {
         </a>
       `;
     } else {
-      // Ready / Waiting for Scan
+      // Error or Scan Result Message
       bodyContent = `
-        <div style="text-align: center; padding: 16px 8px; color: #94a3b8;">
+        <div style="text-align: center; padding: 14px 8px; color: #94a3b8;">
           ${thumb ? `
             <div style="margin-bottom: 12px;">
-              <span style="font-size: 11px; color: #818cf8; display: block; margin-bottom: 6px; font-weight:600;">Letzter Schnappschuss:</span>
-              <img src="${thumb}" style="max-width: 100%; max-height: 140px; border-radius: 8px; border: 1.5px solid rgba(99,102,241,0.4); object-fit: contain; background: #000;" />
+              <span style="font-size: 11px; color: #818cf8; display: block; margin-bottom: 6px; font-weight:600;">Gescannter Bereich:</span>
+              <img src="${thumb}" style="max-width: 100%; max-height: 130px; border-radius: 8px; border: 1.5px solid rgba(99,102,241,0.4); object-fit: contain; background: #000;" />
             </div>
           ` : `
             <div style="font-size: 32px; margin-bottom: 8px;">🎯</div>
           `}
           
-          <h3 style="color: #f8fafc; font-size: 14px; font-weight: 700; margin-bottom: 6px;">
-            Bereit zum Scannen
+          <h3 style="color: ${errorMessage ? '#f87171' : '#f8fafc'}; font-size: 13px; font-weight: 700; margin-bottom: 6px;">
+            ${errorMessage ? `⚠️ ${errorMessage}` : 'Bereit zum Scannen'}
           </h3>
           
           <p style="font-size: 12px; line-height: 1.5; margin-bottom: 14px; color: #94a3b8;">
-            Der grüne Rahmen auf dem Stream passt sich automatisch der Karte an. Drücke <b style="color:#818cf8;">S</b> für sofortige KI-Erkennung.
+            ${errorMessage ? 'Bitte überprüfe deinen API Key oder versuche einen neuen Scan.' : 'Lege den grünen Rahmen über die Karte und drücke S.'}
           </p>
-          
-          <a href="https://www.cardmarket.com/de/Pokemon/Products/Search" target="_blank" class="cs-btn-cardmarket" style="max-width:240px; margin: 0 auto;">
-            🔍 Cardmarket öffnen ↗
-          </a>
+
+          <div style="margin-top: 10px; padding: 10px; background: rgba(255,255,255,0.04); border-radius: 8px; border: 1px solid rgba(255,255,255,0.08);">
+            <span style="font-size: 11px; color: #cbd5e1; display: block; margin-bottom: 6px;">API Key anpassen:</span>
+            <input type="text" id="cs-inp-direct-apikey" placeholder="Gemini API Key einfügen..." value="${geminiApiKey || ''}" style="width: 100%; height: 32px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); border-radius: 6px; padding: 0 8px; color: #fff; font-size: 11px; box-sizing: border-box; outline: none; margin-bottom: 6px;" />
+            <button id="cs-btn-save-direct-key" class="cs-btn-capture" style="width: 100%; height: 32px; font-size: 12px;">
+              💾 Key Speichern
+            </button>
+          </div>
         </div>
       `;
     }
@@ -396,6 +401,7 @@ class CardScannerOverlay {
           this.state.geminiApiKey = val;
           await chrome.storage.local.set({ geminiApiKey: val });
           if (this.onSaveApiKey) this.onSaveApiKey(val);
+          btnSaveKey.innerText = '✓ Gespeichert! Scanne...';
           if (this.onCaptureClick) this.onCaptureClick(); // Trigger instant capture!
         }
       };
