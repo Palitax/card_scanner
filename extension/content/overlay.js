@@ -1,6 +1,6 @@
 /**
  * Card Scanner+ Overlay (Shadow DOM UI)
- * Draggable, Resizable, Direct-Key-Setup & Live Cardmarket Results
+ * Draggable, Resizable, Live API Key Status & Cardmarket Results
  */
 
 class CardScannerOverlay {
@@ -19,7 +19,8 @@ class CardScannerOverlay {
       activeCard: null,
       lastScanMeta: null,
       selectedCondition: 'NM',
-      geminiApiKey: ''
+      geminiApiKey: '',
+      keyStatus: null // 'TESTING', 'VALID', 'INVALID'
     };
 
     // Overlay position and size state
@@ -32,6 +33,7 @@ class CardScannerOverlay {
     this.onCaptureClick = null;
     this.onManualSearch = null;
     this.onSaveApiKey = null;
+    this.onTestApiKey = null;
 
     // Load saved position & API Key
     chrome.storage.local.get(['overlayPos', 'geminiApiKey'], (data) => {
@@ -40,8 +42,10 @@ class CardScannerOverlay {
         this.applyPosition();
       }
       if (data && data.geminiApiKey) {
-        this.state.geminiApiKey = data.geminiApiKey;
+        this.state.geminiApiKey = data.geminiApiKey.trim();
+        this.state.keyStatus = 'VALID';
       }
+      this.render();
     });
 
     this.init();
@@ -109,10 +113,9 @@ class CardScannerOverlay {
     this.container.onclick = null;
     this.applyPosition();
 
-    const { isLoading, candidates, selectedIndex, scanCount, activeCard, lastScanMeta, selectedCondition, geminiApiKey } = this.state;
+    const { isLoading, candidates, selectedIndex, scanCount, activeCard, lastScanMeta, selectedCondition, geminiApiKey, keyStatus } = this.state;
     const currentCard = activeCard || (candidates && candidates[selectedIndex]) || null;
     const currentBid = lastScanMeta?.currentBid || null;
-    const missingApiKey = !geminiApiKey && (!lastScanMeta || lastScanMeta.missingApiKey);
     const thumb = lastScanMeta?.capturedThumbnail || null;
     const errorMessage = lastScanMeta?.errorMessage || lastScanMeta?.apiMessage || null;
 
@@ -124,28 +127,6 @@ class CardScannerOverlay {
           <div class="cs-shimmer-box" style="height: 140px;"></div>
           <div class="cs-shimmer-box" style="height: 38px;"></div>
           <div class="cs-shimmer-box" style="height: 80px;"></div>
-        </div>
-      `;
-    } else if (missingApiKey) {
-      // Direct API Key Setup in Overlay
-      bodyContent = `
-        <div style="text-align: center; padding: 14px 10px; color: #94a3b8;">
-          <div style="font-size: 32px; margin-bottom: 8px;">🔑</div>
-          <h3 style="color: #f8fafc; font-size: 14px; font-weight: 700; margin-bottom: 6px;">
-            Gemini Vision API Key eingeben
-          </h3>
-          <p style="font-size: 12px; line-height: 1.5; margin-bottom: 12px; color: #cbd5e1;">
-            Um Pokémon-Karten per KI zu erkennen, trage hier deinen kostenlosen Key ein:
-          </p>
-          <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;">
-            <input type="text" id="cs-inp-direct-apikey" placeholder="AIzaSy..." style="width: 100%; height: 36px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); border-radius: 8px; padding: 0 10px; color: #fff; font-size: 12px; box-sizing: border-box; outline: none;" />
-            <button id="cs-btn-save-direct-key" class="cs-btn-capture" style="width: 100%; height: 36px;">
-              💾 Key Speichern & Erkennung Aktivieren
-            </button>
-          </div>
-          <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color: #818cf8; font-size: 11px; text-decoration: underline;">
-            Kostenlosen Key in 10s auf Google AI Studio erstellen ↗
-          </a>
         </div>
       `;
     } else if (currentCard) {
@@ -288,32 +269,48 @@ class CardScannerOverlay {
         </a>
       `;
     } else {
-      // Error or Scan Result Message
+      // Setup / Ready State with Live Key Status
+      const isKeyActive = Boolean(geminiApiKey);
+
       bodyContent = `
-        <div style="text-align: center; padding: 14px 8px; color: #94a3b8;">
+        <div style="text-align: center; padding: 12px 6px; color: #94a3b8;">
           ${thumb ? `
-            <div style="margin-bottom: 12px;">
-              <span style="font-size: 11px; color: #818cf8; display: block; margin-bottom: 6px; font-weight:600;">Gescannter Bereich:</span>
-              <img src="${thumb}" style="max-width: 100%; max-height: 130px; border-radius: 8px; border: 1.5px solid rgba(99,102,241,0.4); object-fit: contain; background: #000;" />
+            <div style="margin-bottom: 10px;">
+              <span style="font-size: 11px; color: #818cf8; display: block; margin-bottom: 4px; font-weight:600;">Gescannter Ausschnitt:</span>
+              <img src="${thumb}" style="max-width: 100%; max-height: 125px; border-radius: 8px; border: 1.5px solid rgba(99,102,241,0.4); object-fit: contain; background: #000;" />
             </div>
           ` : `
-            <div style="font-size: 32px; margin-bottom: 8px;">🎯</div>
+            <div style="font-size: 28px; margin-bottom: 6px;">🎯</div>
           `}
           
-          <h3 style="color: ${errorMessage ? '#f87171' : '#f8fafc'}; font-size: 13px; font-weight: 700; margin-bottom: 6px;">
-            ${errorMessage ? `⚠️ ${errorMessage}` : 'Bereit zum Scannen'}
+          <h3 style="color: ${errorMessage ? '#f87171' : '#f8fafc'}; font-size: 13px; font-weight: 700; margin-bottom: 4px;">
+            ${errorMessage ? `⚠️ ${errorMessage}` : (isKeyActive ? '⚡ KI-Erkennung Bereit' : 'API Key erforderlich')}
           </h3>
           
-          <p style="font-size: 12px; line-height: 1.5; margin-bottom: 14px; color: #94a3b8;">
-            ${errorMessage ? 'Bitte überprüfe deinen API Key oder versuche einen neuen Scan.' : 'Lege den grünen Rahmen über die Karte und drücke S.'}
+          <p style="font-size: 12px; line-height: 1.4; margin-bottom: 12px; color: #cbd5e1;">
+            ${isKeyActive ? 'Lege den grünen Rahmen über die Karte und drücke <b style="color:#34d399;">S</b>.' : 'Füge deinen Gemini API Key ein, um die automatische Erkennung zu starten:'}
           </p>
 
-          <div style="margin-top: 10px; padding: 10px; background: rgba(255,255,255,0.04); border-radius: 8px; border: 1px solid rgba(255,255,255,0.08);">
-            <span style="font-size: 11px; color: #cbd5e1; display: block; margin-bottom: 6px;">API Key anpassen:</span>
-            <input type="text" id="cs-inp-direct-apikey" placeholder="Gemini API Key einfügen..." value="${geminiApiKey || ''}" style="width: 100%; height: 32px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); border-radius: 6px; padding: 0 8px; color: #fff; font-size: 11px; box-sizing: border-box; outline: none; margin-bottom: 6px;" />
-            <button id="cs-btn-save-direct-key" class="cs-btn-capture" style="width: 100%; height: 32px; font-size: 12px;">
-              💾 Key Speichern
-            </button>
+          <!-- API Key Status & Input Box -->
+          <div style="padding: 10px; background: rgba(22, 22, 34, 0.85); border-radius: 8px; border: 1px solid rgba(255,255,255,0.08); text-align: left;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+              <span style="font-size: 11px; font-weight: 700; color: #cbd5e1;">Gemini 2.5 Flash API Key:</span>
+              <span id="cs-key-status-badge" style="font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 4px; ${isKeyActive ? 'background:rgba(52,211,153,0.15); color:#34d399; border:1px solid rgba(52,211,153,0.3);' : 'background:rgba(239,68,68,0.15); color:#f87171; border:1px solid rgba(239,68,68,0.3);'}">
+                ${isKeyActive ? '🟢 AKTIV' : '🔴 FEHLT'}
+              </span>
+            </div>
+            
+            <input type="text" id="cs-inp-direct-apikey" placeholder="AQ.Ab8... oder AIzaSy..." value="${geminiApiKey || ''}" style="width: 100%; height: 32px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); border-radius: 6px; padding: 0 8px; color: #fff; font-size: 11px; box-sizing: border-box; outline: none; margin-bottom: 8px;" />
+            
+            <div style="display: flex; gap: 6px;">
+              <button id="cs-btn-save-direct-key" class="cs-btn-capture" style="flex: 1; height: 32px; font-size: 11px;">
+                💾 Key Speichern
+              </button>
+              <button id="cs-btn-test-key" style="height: 32px; padding: 0 10px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); border-radius: 8px; color: #f8fafc; font-size: 11px; font-weight: 600; cursor: pointer;">
+                🧪 Testen
+              </button>
+            </div>
+            <div id="cs-test-result" style="font-size: 11px; margin-top: 6px; display: none;"></div>
           </div>
         </div>
       `;
@@ -356,7 +353,7 @@ class CardScannerOverlay {
           </div>
           <span>${scanCount || 0} Scans</span>
         </div>
-        <span>Card Scanner+ AI</span>
+        <span>Gemini 2.5 Flash</span>
       </div>
 
       <!-- Corner Resize Handle for Overlay -->
@@ -394,6 +391,9 @@ class CardScannerOverlay {
     // Save API Key Directly inside Overlay
     const btnSaveKey = this.shadow.getElementById('cs-btn-save-direct-key');
     const inpKey = this.shadow.getElementById('cs-inp-direct-apikey');
+    const statusBadge = this.shadow.getElementById('cs-key-status-badge');
+    const testResult = this.shadow.getElementById('cs-test-result');
+
     if (btnSaveKey && inpKey) {
       btnSaveKey.onclick = async () => {
         const val = inpKey.value.trim();
@@ -401,8 +401,66 @@ class CardScannerOverlay {
           this.state.geminiApiKey = val;
           await chrome.storage.local.set({ geminiApiKey: val });
           if (this.onSaveApiKey) this.onSaveApiKey(val);
-          btnSaveKey.innerText = '✓ Gespeichert! Scanne...';
-          if (this.onCaptureClick) this.onCaptureClick();
+          btnSaveKey.innerText = '✓ Gespeichert!';
+          if (statusBadge) {
+            statusBadge.innerText = '🟢 AKTIV';
+            statusBadge.style.color = '#34d399';
+          }
+          setTimeout(() => {
+            if (this.onCaptureClick) this.onCaptureClick(); // Trigger instant capture!
+          }, 400);
+        }
+      };
+    }
+
+    // Test API Key Live Button
+    const btnTest = this.shadow.getElementById('cs-btn-test-key');
+    if (btnTest && inpKey) {
+      btnTest.onclick = async () => {
+        const val = inpKey.value.trim();
+        if (!val) {
+          alert('Bitte zuerst einen API Key eingeben.');
+          return;
+        }
+        btnTest.innerText = '⏳ Prüfe...';
+        if (testResult) {
+          testResult.style.display = 'block';
+          testResult.style.color = '#cbd5e1';
+          testResult.innerText = 'Verbindung zu Google Gemini 2.5 Flash wird getestet...';
+        }
+
+        try {
+          const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${val}`;
+          const res = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ contents: [{ parts: [{ text: 'ping' }] }] })
+          });
+
+          if (res.ok) {
+            btnTest.innerText = '✓ Gültig!';
+            if (testResult) {
+              testResult.style.color = '#34d399';
+              testResult.innerText = '✓ Verbindung erfolgreich! Gemini 2.5 Flash antwortet einwandfrei.';
+            }
+            if (statusBadge) {
+              statusBadge.innerText = '🟢 AKTIV';
+              statusBadge.style.color = '#34d399';
+            }
+          } else {
+            const err = await res.json();
+            btnTest.innerText = '✕ Fehler';
+            if (testResult) {
+              testResult.style.color = '#f87171';
+              testResult.innerText = `✕ Fehler: ${err.error?.message || res.statusText}`;
+            }
+          }
+        } catch (e) {
+          btnTest.innerText = '✕ Fehler';
+          if (testResult) {
+            testResult.style.color = '#f87171';
+            testResult.innerText = `✕ Netzwerkfehler: ${e.message}`;
+          }
         }
       };
     }
