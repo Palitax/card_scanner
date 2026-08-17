@@ -135,6 +135,11 @@
       performAICapture();
     };
 
+    window.cardScannerOverlay.onSaveApiKey = (key) => {
+      geminiApiKey = key;
+      console.log('[Card Scanner+] Gemini API Key updated directly from Overlay.');
+    };
+
     window.cardScannerOverlay.onManualSearch = (query) => {
       searchBackendByQuery(query);
     };

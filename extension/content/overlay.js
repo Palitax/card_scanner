@@ -1,6 +1,6 @@
 /**
  * Card Scanner+ Overlay (Shadow DOM UI)
- * Live Cardmarket Comps, Live Bid & Overpaying Analyzer & Graded Comps
+ * Draggable, Resizable, Direct-Key-Setup & Live Cardmarket Results
  */
 
 class CardScannerOverlay {
@@ -18,10 +18,32 @@ class CardScannerOverlay {
       currencySymbol: '€',
       activeCard: null,
       lastScanMeta: null,
-      selectedCondition: 'NM'
+      selectedCondition: 'NM',
+      geminiApiKey: ''
     };
+
+    // Overlay position and size state
+    this.pos = { left: 16, top: 16, width: 380, height: null };
+    this.isDragging = false;
+    this.isResizing = false;
+    this.dragStart = { x: 0, y: 0 };
+    this.initialPos = { left: 16, top: 16, width: 380, height: 500 };
+
     this.onCaptureClick = null;
     this.onManualSearch = null;
+    this.onSaveApiKey = null;
+
+    // Load saved position & API Key
+    chrome.storage.local.get(['overlayPos', 'geminiApiKey'], (data) => {
+      if (data && data.overlayPos) {
+        this.pos = data.overlayPos;
+        this.applyPosition();
+      }
+      if (data && data.geminiApiKey) {
+        this.state.geminiApiKey = data.geminiApiKey;
+      }
+    });
+
     this.init();
   }
 
@@ -45,7 +67,19 @@ class CardScannerOverlay {
     this.container.className = 'cs-sidebar';
     this.shadow.appendChild(this.container);
 
+    this.applyPosition();
     this.render();
+    this.bindWindowDragEvents();
+  }
+
+  applyPosition() {
+    if (!this.container || this.state.isCollapsed) return;
+    this.container.style.left = `${this.pos.left}px`;
+    this.container.style.top = `${this.pos.top}px`;
+    this.container.style.width = `${this.pos.width}px`;
+    if (this.pos.height) {
+      this.container.style.height = `${this.pos.height}px`;
+    }
   }
 
   formatPrice(val) {
@@ -60,8 +94,10 @@ class CardScannerOverlay {
 
     if (this.state.isCollapsed) {
       this.container.className = 'cs-sidebar cs-collapsed';
+      this.container.style.width = '56px';
+      this.container.style.height = '56px';
       this.container.innerHTML = `
-        <div class="cs-btn-icon" style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:18px;" title="Card Scanner+ öffnen">
+        <div class="cs-btn-icon" style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:20px;cursor:pointer;" title="Card Scanner+ öffnen">
           ⚡
         </div>
       `;
@@ -71,12 +107,13 @@ class CardScannerOverlay {
 
     this.container.className = 'cs-sidebar';
     this.container.onclick = null;
+    this.applyPosition();
 
-    const { isLoading, candidates, selectedIndex, scanCount, activeCard, lastScanMeta, selectedCondition } = this.state;
+    const { isLoading, candidates, selectedIndex, scanCount, activeCard, lastScanMeta, selectedCondition, geminiApiKey } = this.state;
     const currentCard = activeCard || (candidates && candidates[selectedIndex]) || null;
     const currentBid = lastScanMeta?.currentBid || null;
-    const missingApiKey = lastScanMeta?.missingApiKey || false;
-    const errorMessage = lastScanMeta?.errorMessage || lastScanMeta?.apiMessage || null;
+    const missingApiKey = !geminiApiKey && (!lastScanMeta || lastScanMeta.missingApiKey);
+    const thumb = lastScanMeta?.capturedThumbnail || null;
 
     let bodyContent = '';
 
@@ -88,8 +125,30 @@ class CardScannerOverlay {
           <div class="cs-shimmer-box" style="height: 80px;"></div>
         </div>
       `;
+    } else if (missingApiKey) {
+      // Direct API Key Setup in Overlay
+      bodyContent = `
+        <div style="text-align: center; padding: 14px 10px; color: #94a3b8;">
+          <div style="font-size: 32px; margin-bottom: 8px;">🔑</div>
+          <h3 style="color: #f8fafc; font-size: 14px; font-weight: 700; margin-bottom: 6px;">
+            Gemini Vision API Key eingeben
+          </h3>
+          <p style="font-size: 12px; line-height: 1.5; margin-bottom: 12px; color: #cbd5e1;">
+            Um Pokémon-Karten per KI zu erkennen, trage hier deinen kostenlosen Key ein:
+          </p>
+          <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;">
+            <input type="text" id="cs-inp-direct-apikey" placeholder="AIzaSy..." style="width: 100%; height: 36px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); border-radius: 8px; padding: 0 10px; color: #fff; font-size: 12px; box-sizing: border-box; outline: none;" />
+            <button id="cs-btn-save-direct-key" class="cs-btn-capture" style="width: 100%; height: 36px;">
+              💾 Key Speichern & Erkennung Aktivieren
+            </button>
+          </div>
+          <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color: #818cf8; font-size: 11px; text-decoration: underline;">
+            Kostenlosen Key in 10s auf Google AI Studio erstellen ↗
+          </a>
+        </div>
+      `;
     } else if (currentCard) {
-      const imgUrl = currentCard.image_url || lastScanMeta?.capturedThumbnail || chrome.runtime.getURL('icons/icon-128.png');
+      const imgUrl = currentCard.image_url || thumb || chrome.runtime.getURL('icons/icon-128.png');
       const lang = (currentCard.language || 'DE').toUpperCase();
       const matchScore = currentCard.match_score || 99;
       const title = currentCard.name || 'Pokémon Karte';
@@ -138,7 +197,7 @@ class CardScannerOverlay {
 
       const candidateListHtml = (candidates || []).map((cand, idx) => {
         const isSel = idx === selectedIndex ? 'cs-selected' : '';
-        const cImg = cand.image_url || lastScanMeta?.capturedThumbnail || imgUrl;
+        const cImg = cand.image_url || thumb || imgUrl;
         const cLang = (cand.language || 'DE').toUpperCase();
         const cScore = cand.match_score || (idx === 0 ? 99 : 50);
         return `
@@ -228,62 +287,38 @@ class CardScannerOverlay {
         </a>
       `;
     } else {
-      // Empty / Error / Setup State
-      const detectedCode = lastScanMeta && lastScanMeta.detectedCode ? lastScanMeta.detectedCode : null;
-      const thumb = lastScanMeta && lastScanMeta.capturedThumbnail ? lastScanMeta.capturedThumbnail : null;
-
-      const cmSearchUrl = detectedCode
-        ? `https://www.cardmarket.com/de/Pokemon/Products/Search?searchString=${encodeURIComponent(detectedCode)}`
-        : 'https://www.cardmarket.com/de/Pokemon/Products/Search';
-
-      if (missingApiKey) {
-        bodyContent = `
-          <div style="text-align: center; padding: 14px 8px; color: #94a3b8;">
-            <div style="font-size: 32px; margin-bottom: 8px;">🔑</div>
-            <h3 style="color: #f8fafc; font-size: 14px; font-weight: 700; margin-bottom: 6px;">
-              Gemini Vision API Key fehlt
-            </h3>
-            <p style="font-size: 12px; line-height: 1.5; margin-bottom: 12px; color: #cbd5e1;">
-              Klicke oben rechts in Chrome auf das <b>Card Scanner+ Icon</b> und trage deinen kostenlosen Gemini API Key ein.
-            </p>
-            <a href="https://aistudio.google.com/app/apikey" target="_blank" class="cs-btn-cardmarket" style="max-width:240px; margin: 0 auto; background:#4f46e5; border-color:#6366f1;">
-              Kostenlosen Key holen ↗
-            </a>
-          </div>
-        `;
-      } else {
-        bodyContent = `
-          <div style="text-align: center; padding: 14px 6px; color: #94a3b8;">
-            ${thumb ? `
-              <div style="margin-bottom: 10px;">
-                <span style="font-size: 11px; color: #818cf8; display: block; margin-bottom: 4px;">Gescannter Zielbereich:</span>
-                <img src="${thumb}" style="max-width: 100%; max-height: 120px; border-radius: 8px; border: 1px solid rgba(99,102,241,0.3); object-fit: contain; background: #000;" />
-              </div>
-            ` : `
-              <div style="font-size: 28px; margin-bottom: 6px;">🎯</div>
-            `}
-            
-            <h3 style="color: #f8fafc; font-size: 13px; margin-bottom: 4px;">
-              ${errorMessage ? errorMessage : (detectedCode ? `Erkannt: "${detectedCode}"` : 'Scan-Bereich Aktiv')}
-            </h3>
-            
-            <p style="font-size: 12px; line-height: 1.4; margin-bottom: 12px; color: #94a3b8;">
-              ${detectedCode ? 'Nummer nicht in der Datenbank gefunden.' : 'Der grüne Rahmen passt sich automatisch an. Drücke <b style="color:#818cf8;">S</b> zum Scannen.'}
-            </p>
-            
-            <a href="${cmSearchUrl}" target="_blank" class="cs-btn-cardmarket" id="cs-btn-fallback-cm" style="max-width:260px; margin: 0 auto;">
-              🔍 ${detectedCode ? `"${detectedCode}" auf Cardmarket suchen ↗` : 'Auf Cardmarket suchen ↗'}
-            </a>
-          </div>
-        `;
-      }
+      // Ready / Waiting for Scan
+      bodyContent = `
+        <div style="text-align: center; padding: 16px 8px; color: #94a3b8;">
+          ${thumb ? `
+            <div style="margin-bottom: 12px;">
+              <span style="font-size: 11px; color: #818cf8; display: block; margin-bottom: 6px; font-weight:600;">Letzter Schnappschuss:</span>
+              <img src="${thumb}" style="max-width: 100%; max-height: 140px; border-radius: 8px; border: 1.5px solid rgba(99,102,241,0.4); object-fit: contain; background: #000;" />
+            </div>
+          ` : `
+            <div style="font-size: 32px; margin-bottom: 8px;">🎯</div>
+          `}
+          
+          <h3 style="color: #f8fafc; font-size: 14px; font-weight: 700; margin-bottom: 6px;">
+            Bereit zum Scannen
+          </h3>
+          
+          <p style="font-size: 12px; line-height: 1.5; margin-bottom: 14px; color: #94a3b8;">
+            Der grüne Rahmen auf dem Stream passt sich automatisch der Karte an. Drücke <b style="color:#818cf8;">S</b> für sofortige KI-Erkennung.
+          </p>
+          
+          <a href="https://www.cardmarket.com/de/Pokemon/Products/Search" target="_blank" class="cs-btn-cardmarket" style="max-width:240px; margin: 0 auto;">
+            🔍 Cardmarket öffnen ↗
+          </a>
+        </div>
+      `;
     }
 
     const prefillValue = (lastScanMeta && lastScanMeta.detectedCode) ? lastScanMeta.detectedCode : '';
 
     this.container.innerHTML = `
-      <!-- Header -->
-      <div class="cs-header">
+      <!-- Draggable Header Bar -->
+      <div class="cs-header" id="cs-draggable-header" style="cursor: move;">
         <div class="cs-search-row">
           <div class="cs-search-box">
             <input type="text" class="cs-search-input" id="cs-search-input" placeholder="Kartenname oder Nummer..." value="${prefillValue}" />
@@ -292,9 +327,9 @@ class CardScannerOverlay {
           <button class="cs-btn-icon" id="cs-btn-collapse" title="Minimieren">✕</button>
         </div>
         <div class="cs-controls-row">
-          <div class="cs-badge-live">
+          <div class="cs-badge-live" title="Overlay per Drag & Drop verschiebbar">
             <span class="cs-live-dot"></span>
-            <span>Live Scan</span>
+            <span>Card Scanner+ ✥</span>
           </div>
           <button class="cs-btn-capture" id="cs-btn-capture">
             <span>📸 Capture</span>
@@ -308,7 +343,7 @@ class CardScannerOverlay {
         ${bodyContent}
       </div>
 
-      <!-- Footer -->
+      <!-- Footer with Resize Handle -->
       <div class="cs-footer">
         <div class="cs-footer-counter">
           <div class="cs-footer-bar">
@@ -318,12 +353,22 @@ class CardScannerOverlay {
         </div>
         <span>Card Scanner+ AI</span>
       </div>
+
+      <!-- Corner Resize Handle for Overlay -->
+      <div class="cs-overlay-resize-handle" id="cs-overlay-resize-handle" style="position: absolute; right: 0; bottom: 0; width: 16px; height: 16px; cursor: se-resize; pointer-events: auto; display: flex; align-items: flex-end; justify-content: flex-end; padding: 2px;">
+        <svg style="width: 8px; height: 8px; color: #818cf8;" viewBox="0 0 6 6" fill="currentColor">
+          <circle cx="5" cy="5" r="1"></circle>
+          <circle cx="1" cy="5" r="1"></circle>
+          <circle cx="5" cy="1" r="1"></circle>
+        </svg>
+      </div>
     `;
 
     this.bindEvents();
   }
 
   bindEvents() {
+    // Capture Button
     const btnCap = this.shadow.getElementById('cs-btn-capture');
     if (btnCap) {
       btnCap.onclick = (e) => {
@@ -332,6 +377,7 @@ class CardScannerOverlay {
       };
     }
 
+    // Collapse
     const btnCol = this.shadow.getElementById('cs-btn-collapse');
     if (btnCol) {
       btnCol.onclick = (e) => {
@@ -340,6 +386,22 @@ class CardScannerOverlay {
       };
     }
 
+    // Save API Key Directly inside Overlay
+    const btnSaveKey = this.shadow.getElementById('cs-btn-save-direct-key');
+    const inpKey = this.shadow.getElementById('cs-inp-direct-apikey');
+    if (btnSaveKey && inpKey) {
+      btnSaveKey.onclick = async () => {
+        const val = inpKey.value.trim();
+        if (val) {
+          this.state.geminiApiKey = val;
+          await chrome.storage.local.set({ geminiApiKey: val });
+          if (this.onSaveApiKey) this.onSaveApiKey(val);
+          if (this.onCaptureClick) this.onCaptureClick(); // Trigger instant capture!
+        }
+      };
+    }
+
+    // Candidate Selection
     const candItems = this.shadow.querySelectorAll('.cs-cand-item[data-index]');
     candItems.forEach(el => {
       el.onclick = () => {
@@ -348,6 +410,7 @@ class CardScannerOverlay {
       };
     });
 
+    // Condition Switch
     const condItems = this.shadow.querySelectorAll('.cs-condition-item[data-cond]');
     condItems.forEach(el => {
       el.onclick = () => {
@@ -357,6 +420,7 @@ class CardScannerOverlay {
       };
     });
 
+    // Reset Button
     const btnNone = this.shadow.getElementById('cs-btn-none');
     if (btnNone) {
       btnNone.onclick = () => {
@@ -366,6 +430,7 @@ class CardScannerOverlay {
       };
     }
 
+    // Manual Search Input
     const searchInp = this.shadow.getElementById('cs-search-input');
     if (searchInp) {
       searchInp.onkeydown = (e) => {
@@ -375,19 +440,62 @@ class CardScannerOverlay {
           }
         }
       };
-
-      const fallbackBtn = this.shadow.getElementById('cs-btn-fallback-cm');
-      if (fallbackBtn) {
-        fallbackBtn.onclick = (e) => {
-          const query = searchInp.value.trim() || (this.state.lastScanMeta && this.state.lastScanMeta.detectedCode);
-          if (query) {
-            fallbackBtn.href = `https://www.cardmarket.com/de/Pokemon/Products/Search?searchString=${encodeURIComponent(query)}`;
-          } else {
-            fallbackBtn.href = 'https://www.cardmarket.com/de/Pokemon/Products/Search';
-          }
-        };
-      }
     }
+
+    // Overlay Header Drag Start
+    const header = this.shadow.getElementById('cs-draggable-header');
+    if (header) {
+      header.onmousedown = (e) => {
+        if (e.target.closest('button') || e.target.closest('input')) return;
+        this.isDragging = true;
+        this.dragStart = { x: e.clientX, y: e.clientY };
+        this.initialPos = { ...this.pos };
+        e.preventDefault();
+      };
+    }
+
+    // Overlay Corner Resize Start
+    const resizeHandle = this.shadow.getElementById('cs-overlay-resize-handle');
+    if (resizeHandle) {
+      resizeHandle.onmousedown = (e) => {
+        this.isResizing = true;
+        this.dragStart = { x: e.clientX, y: e.clientY };
+        this.initialPos = { ...this.pos };
+        e.preventDefault();
+        e.stopPropagation();
+      };
+    }
+  }
+
+  bindWindowDragEvents() {
+    window.addEventListener('mousemove', (e) => {
+      if (!this.isDragging && !this.isResizing) return;
+
+      const dx = e.clientX - this.dragStart.x;
+      const dy = e.clientY - this.dragStart.y;
+
+      if (this.isDragging) {
+        const newLeft = Math.max(8, Math.min(window.innerWidth - this.pos.width - 8, this.initialPos.left + dx));
+        const newTop = Math.max(8, Math.min(window.innerHeight - 100, this.initialPos.top + dy));
+        this.pos.left = newLeft;
+        this.pos.top = newTop;
+        this.applyPosition();
+      } else if (this.isResizing) {
+        const newWidth = Math.max(320, Math.min(600, this.initialPos.width + dx));
+        const newHeight = Math.max(300, Math.min(window.innerHeight - 32, (this.initialPos.height || 500) + dy));
+        this.pos.width = newWidth;
+        this.pos.height = newHeight;
+        this.applyPosition();
+      }
+    });
+
+    window.addEventListener('mouseup', () => {
+      if (this.isDragging || this.isResizing) {
+        this.isDragging = false;
+        this.isResizing = false;
+        chrome.storage.local.set({ overlayPos: this.pos });
+      }
+    });
   }
 
   setScanning(isScanning) {
