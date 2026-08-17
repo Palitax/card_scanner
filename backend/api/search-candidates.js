@@ -20,20 +20,25 @@ export default async function handler(req, res) {
 
   try {
     const body = typeof req.body === 'string' ? JSON.parse(req.body) : (req.body || {});
-    const candidates = await matchCandidates(body);
+    const result = await matchCandidates(body);
+
+    const candidates = Array.isArray(result) ? result : (result.candidates || []);
+    const missingKey = result && result.gemini_missing_key ? true : false;
 
     return res.status(200).json({
       success: true,
       query: body,
       count: candidates.length,
-      candidates: candidates
+      candidates: candidates,
+      gemini_missing_key: missingKey
     });
   } catch (err) {
     console.error('[API /api/search-candidates Error]:', err);
     return res.status(500).json({
       success: false,
       error: err.message,
-      candidates: []
+      candidates: [],
+      gemini_missing_key: false
     });
   }
 }

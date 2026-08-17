@@ -75,6 +75,7 @@ class CardScannerOverlay {
     const { isLoading, candidates, selectedIndex, scanCount, activeCard, lastScanMeta, selectedCondition } = this.state;
     const currentCard = activeCard || (candidates && candidates[selectedIndex]) || null;
     const currentBid = lastScanMeta?.currentBid || null;
+    const missingApiKey = lastScanMeta?.missingApiKey || false;
 
     let bodyContent = '';
 
@@ -98,14 +99,12 @@ class CardScannerOverlay {
       const pricePSA10 = currentCard.price_psa10 || (priceTrend ? Number((priceTrend * 11.5).toFixed(2)) : null);
       const pricePSA9 = currentCard.price_psa9 || (priceTrend ? Number((priceTrend * 4.2).toFixed(2)) : null);
 
-      // Condition Multipliers from TCG Engine
       const condNM = priceTrend ? this.formatPrice(priceTrend) : '-';
       const condLP = priceTrend ? this.formatPrice(priceTrend * 0.82) : '-';
       const condMP = priceTrend ? this.formatPrice(priceTrend * 0.62) : '-';
       const condHP = priceTrend ? this.formatPrice(priceTrend * 0.42) : '-';
       const condDM = priceTrend ? this.formatPrice(priceTrend * 0.22) : '-';
 
-      // Live Bid & Overpaying Analyzer (Feature 3)
       let dealBarHtml = '';
       if (priceTrend) {
         let dealClass = 'cs-deal-fair';
@@ -123,7 +122,6 @@ class CardScannerOverlay {
         }
 
         dealBarHtml = `
-          <!-- Live Bid & Deal Analyzer Bar -->
           <div class="cs-deal-bar ${dealClass}" style="margin-top: 10px; padding: 8px 10px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(255,255,255,0.08);">
             <div class="cs-sold-badge">
               <span class="cs-sold-price" style="font-size: 14px; font-weight: 700;">${this.formatPrice(displayBid)}</span>
@@ -137,7 +135,6 @@ class CardScannerOverlay {
         `;
       }
 
-      // Candidates Variant Carousel (Feature 2)
       const candidateListHtml = (candidates || []).map((cand, idx) => {
         const isSel = idx === selectedIndex ? 'cs-selected' : '';
         const cImg = cand.image_url || imgUrl;
@@ -229,7 +226,7 @@ class CardScannerOverlay {
         </a>
       `;
     } else {
-      // Empty State
+      // Empty / Not Found / Setup State
       const detectedCode = lastScanMeta && lastScanMeta.detectedCode ? lastScanMeta.detectedCode : null;
       const thumb = lastScanMeta && lastScanMeta.capturedThumbnail ? lastScanMeta.capturedThumbnail : null;
 
@@ -237,30 +234,47 @@ class CardScannerOverlay {
         ? `https://www.cardmarket.com/de/Pokemon/Products/Search?searchString=${encodeURIComponent(detectedCode)}`
         : 'https://www.cardmarket.com/de/Pokemon/Products/Search';
 
-      bodyContent = `
-        <div style="text-align: center; padding: 14px 6px; color: #94a3b8;">
-          ${thumb ? `
-            <div style="margin-bottom: 10px;">
-              <span style="font-size: 11px; color: #818cf8; display: block; margin-bottom: 4px;">⚡ Auto-Tracked Card:</span>
-              <img src="${thumb}" style="max-width: 100%; max-height: 115px; border-radius: 8px; border: 1px solid rgba(99,102,241,0.3); object-fit: contain; background: #000;" />
-            </div>
-          ` : `
-            <div style="font-size: 28px; margin-bottom: 6px;">🎯</div>
-          `}
-          
-          <h3 style="color: #f8fafc; font-size: 13px; margin-bottom: 4px;">
-            ${detectedCode ? `Erkannt: "${detectedCode}"` : 'Auto-Tracker Aktiv'}
-          </h3>
-          
-          <p style="font-size: 12px; line-height: 1.4; margin-bottom: 12px; color: #94a3b8;">
-            ${detectedCode ? 'Nummer nicht in der Datenbank gefunden.' : 'Der grüne Rahmen folgt der Karte im Stream. Drücke einfach <b style="color:#818cf8;">S</b> zum Scannen.'}
-          </p>
-          
-          <a href="${cmSearchUrl}" target="_blank" class="cs-btn-cardmarket" id="cs-btn-fallback-cm" style="max-width:260px; margin: 0 auto;">
-            🔍 ${detectedCode ? `"${detectedCode}" auf Cardmarket suchen ↗` : 'Auf Cardmarket suchen ↗'}
-          </a>
-        </div>
-      `;
+      if (missingApiKey) {
+        bodyContent = `
+          <div style="text-align: center; padding: 14px 8px; color: #94a3b8;">
+            <div style="font-size: 30px; margin-bottom: 8px;">🔑</div>
+            <h3 style="color: #f8fafc; font-size: 14px; font-weight: 700; margin-bottom: 6px;">
+              Gemini Vision API Key erforderlich
+            </h3>
+            <p style="font-size: 12px; line-height: 1.5; margin-bottom: 12px; color: #cbd5e1;">
+              Trage deinen kostenlosen Gemini API Key im <b>Extension-Popup (Icon oben rechts in Chrome)</b> ein, damit die KI-Kartenerkennung aktiv wird.
+            </p>
+            <a href="https://aistudio.google.com/app/apikey" target="_blank" class="cs-btn-cardmarket" style="max-width:240px; margin: 0 auto; background:#4f46e5; border-color:#6366f1;">
+              Kostenlosen Key holen ↗
+            </a>
+          </div>
+        `;
+      } else {
+        bodyContent = `
+          <div style="text-align: center; padding: 14px 6px; color: #94a3b8;">
+            ${thumb ? `
+              <div style="margin-bottom: 10px;">
+                <span style="font-size: 11px; color: #818cf8; display: block; margin-bottom: 4px;">Gescannter Zielbereich:</span>
+                <img src="${thumb}" style="max-width: 100%; max-height: 120px; border-radius: 8px; border: 1px solid rgba(99,102,241,0.3); object-fit: contain; background: #000;" />
+              </div>
+            ` : `
+              <div style="font-size: 28px; margin-bottom: 6px;">🎯</div>
+            `}
+            
+            <h3 style="color: #f8fafc; font-size: 13px; margin-bottom: 4px;">
+              ${detectedCode ? `Erkannt: "${detectedCode}"` : 'Scan-Bereich Aktiv'}
+            </h3>
+            
+            <p style="font-size: 12px; line-height: 1.4; margin-bottom: 12px; color: #94a3b8;">
+              ${detectedCode ? 'Nummer nicht in der Datenbank gefunden.' : 'Ziehe den blauen Rahmen über die Karte des Streamers und drücke <b style="color:#818cf8;">S</b>.'}
+            </p>
+            
+            <a href="${cmSearchUrl}" target="_blank" class="cs-btn-cardmarket" id="cs-btn-fallback-cm" style="max-width:260px; margin: 0 auto;">
+              🔍 ${detectedCode ? `"${detectedCode}" auf Cardmarket suchen ↗` : 'Auf Cardmarket suchen ↗'}
+            </a>
+          </div>
+        `;
+      }
     }
 
     const prefillValue = (lastScanMeta && lastScanMeta.detectedCode) ? lastScanMeta.detectedCode : '';
@@ -278,7 +292,7 @@ class CardScannerOverlay {
         <div class="cs-controls-row">
           <div class="cs-badge-live">
             <span class="cs-live-dot"></span>
-            <span>Live Tracker</span>
+            <span>Live Scan</span>
           </div>
           <button class="cs-btn-capture" id="cs-btn-capture">
             <span>📸 Capture</span>

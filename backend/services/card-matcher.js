@@ -10,10 +10,11 @@ import { memoryCache } from './cache.js';
 export async function matchCandidates(params = {}) {
   const { imageBase64, customApiKey, number, total, promoCode, setCode, code, artist, hp, auctionHint, query } = params;
 
+  const hasApiKey = Boolean(customApiKey || process.env.GEMINI_API_KEY);
   let geminiCard = null;
 
   // 1. If an image is provided, run high-speed Gemini Flash Vision AI
-  if (imageBase64) {
+  if (imageBase64 && hasApiKey) {
     geminiCard = await identifyCardWithGemini(imageBase64, customApiKey);
   }
 
@@ -29,7 +30,7 @@ export async function matchCandidates(params = {}) {
     const cached = memoryCache.get(searchKey);
     if (cached) {
       console.log(`[Card Matcher] Cache Hit for '${searchKey}' (${cached.length} candidates)`);
-      return cached;
+      return { candidates: cached, gemini_missing_key: !hasApiKey };
     }
   }
 
@@ -173,5 +174,5 @@ export async function matchCandidates(params = {}) {
     memoryCache.set(searchKey, candidates);
   }
 
-  return candidates;
+  return { candidates, gemini_missing_key: !hasApiKey };
 }
