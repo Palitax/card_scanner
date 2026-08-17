@@ -1,25 +1,24 @@
 /**
  * Gemini Flash Vision Service for Card Scanner+
- * High-speed multimodal AI card recognition with robust schema normalization
+ * High-speed multimodal AI card recognition using Gemini 2.5 Flash
  */
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
 
 const CARD_PROMPT = `
 You are an expert Pokemon and Trading Card Game identifier.
 Analyze this card shown in the livestream frame.
-Identify the exact card (e.g. "Mew V", "Iron Treads ex", "Primarina", "Charizard", "Venonat", "Medicham"), even if in German, Japanese, or English.
+Identify the exact card (e.g. "Mew V", "Paldean Clodsire ex", "Iron Treads ex", "Primarina", "Charizard", "Venonat", "Medicham"), even if in German, Japanese, or English.
 
 Return a JSON object with this schema:
 {
-  "name": string (Card name, e.g. "Mew V", "Eisenrad ex", "Venonat"),
+  "name": string (Card name, e.g. "Mew V", "Paldea-Suelord ex", "Eisenrad ex", "Venonat"),
   "name_de": string or null (German name if printed in German),
-  "set_name": string (Set or expansion, e.g. "Fusion Strike", "Scarlet & Violet", "Jungle", "Mask of Change"),
-  "number": string (Card number, e.g. "069/264", "066/198", "63/64", "120/101"),
-  "rarity": string (e.g. "Ultra Rare", "Double Rare", "Art Rare", "Common", "Holo"),
+  "set_name": string (Set or expansion, e.g. "Paldea Evolved", "Fusion Strike", "Scarlet & Violet", "Jungle", "Mask of Change"),
+  "number": string (Card number, e.g. "130/193", "069/264", "066/198", "63/64", "120/101"),
+  "rarity": string (e.g. "Double Rare", "Ultra Rare", "Art Rare", "Common", "Holo"),
   "language": string ("DE", "EN", "JP", "FR"),
-  "hp": string or null (e.g. "180", "220", "70")
+  "hp": string or null (e.g. "280", "180", "220", "70")
 }
 
 If no trading card is visible at all, return: { "name": null }
@@ -54,7 +53,7 @@ function normalizeGeminiCard(raw) {
 }
 
 /**
- * Identifies a card from a Base64 image using Gemini Flash
+ * Identifies a card from a Base64 image using Gemini 2.5 Flash
  */
 export async function identifyCardWithGemini(imageBase64, customApiKey = "") {
   const apiKey = (customApiKey || GEMINI_API_KEY || "").trim();
@@ -78,8 +77,8 @@ export async function identifyCardWithGemini(imageBase64, customApiKey = "") {
     cleanBase64 = parts[1] || "";
   }
 
-  const modelsToTry = [GEMINI_MODEL, "gemini-2.5-flash", "gemini-flash-latest", "gemini-2.0-flash"];
-  const uniqueModels = Array.from(new Set(modelsToTry.filter(Boolean)));
+  // Active models supported by Google Gemini API
+  const modelsToTry = ["gemini-2.5-flash", "gemini-3.6-flash", "gemini-flash-latest"];
 
   const payload = {
     contents: [
@@ -104,7 +103,7 @@ export async function identifyCardWithGemini(imageBase64, customApiKey = "") {
 
   const startTime = performance.now();
 
-  for (const model of uniqueModels) {
+  for (const model of modelsToTry) {
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
     try {
@@ -125,7 +124,9 @@ export async function identifyCardWithGemini(imageBase64, customApiKey = "") {
           parsedErr = jsonErr.error?.message || errText;
         } catch (e) {}
 
-        if (res.status === 404 && model !== uniqueModels[uniqueModels.length - 1]) {
+        // If deprecated or not found on this model, fallback to next model
+        if ((res.status === 404 || res.status === 400) && model !== modelsToTry[modelsToTry.length - 1]) {
+          console.warn(`[Gemini Vision] Model ${model} returned error, trying next fallback...`);
           continue;
         }
 
@@ -148,7 +149,7 @@ export async function identifyCardWithGemini(imageBase64, customApiKey = "") {
       return { data: normalized };
     } catch (err) {
       console.error(`[Gemini Vision Exception with ${model}]:`, err.message);
-      if (model === uniqueModels[uniqueModels.length - 1]) {
+      if (model === modelsToTry[modelsToTry.length - 1]) {
         return { error: 'EXCEPTION', message: err.message };
       }
     }
