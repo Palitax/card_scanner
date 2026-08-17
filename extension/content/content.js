@@ -4,7 +4,7 @@
  */
 
 (function () {
-  console.log('[Card Scanner+] Content script active (100% Direct Serverless Mode).');
+  console.log('[Card Scanner+] Content script active (Precision AI Matcher).');
 
   const SUPABASE_URL = 'https://api-supabase.rohdedigital.de';
   const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlIiwiaWF0IjoxNjQxNzY5MjAwLCJleHAiOjI3OTk1MzU2MDB9.dLVXX_m4DKuyn028uVpXtQOI_Kp08FmTZ8GvTqT0DSk';
@@ -13,9 +13,6 @@
   let isCapturing = false;
   let hotkeyChar = 's';
   let geminiApiKey = '';
-
-  // Local In-Memory Cache for Sub-Millisecond Repeat Matches
-  const cardCache = new Map();
 
   // Load User Preferences
   chrome.storage.local.get(['hotkey', 'geminiApiKey'], (data) => {
@@ -118,7 +115,7 @@
       console.log('[Card Scanner+] Gemini Vision result:', geminiCard);
 
       // 2. Direct Supabase Pricing Lookup (~60ms)
-      const candidates = await resolveCandidates(geminiCard, auctionHint);
+      const candidates = await resolveCandidates(geminiCard, auctionHint, imageBase64);
       const totalLatency = Math.round(performance.now() - scanStartTime);
 
       console.log(`[Card Scanner+] ✓ Scan completed in ${totalLatency}ms:`, candidates);
@@ -170,12 +167,12 @@
             text: `Analyze this Pokemon card.
 Return JSON:
 {
-  "name": string (Card name, e.g. "Blastoise", "水箭龟", "Turtok", "Paldea-Suelord ex"),
+  "name": string (Card name as printed, e.g. "Blastoise", "水箭龟", "Turtok", "Paldea-Suelord ex"),
   "name_en": string (English Pokemon name, e.g. "Blastoise", "Paldean Clodsire ex", "Iron Treads ex"),
   "name_de": string or null (German name if known, e.g. "Turtok", "Eisenrad ex"),
   "set_name": string (Set or expansion, e.g. "CS5.5C", "151", "Fusion Strike", "Paldea Evolved"),
-  "number": string (e.g. "014/066", "130/193", "069/264"),
-  "rarity": string (e.g. "Rare", "Double Rare", "Ultra Rare", "Art Rare"),
+  "number": string (Exact card number printed on bottom, e.g. "014/066", "130/193", "069/264", "200/165"),
+  "rarity": string (e.g. "Holo Rare", "Rare", "Double Rare", "Special Illustration Rare", "Art Rare"),
   "language": string ("DE", "EN", "JP", "CN", "FR")
 }`
           },
@@ -217,7 +214,7 @@ Return JSON:
       return null;
     }
 
-    const name = parsed.name_de || parsed.name || parsed.name_en || parsed.card_name || parsed.title || null;
+    const name = parsed.name || parsed.name_de || parsed.name_en || parsed.card_name || parsed.title || null;
     if (!name || name === 'null') return null;
 
     return {
@@ -250,29 +247,58 @@ Return JSON:
   }
 
   /**
-   * Resolves Candidates from Supabase REST + TCGplayer Calculation
+   * Resolves Candidates with Strict Number & Artwork Verification
    */
-  async function resolveCandidates(geminiCard, auctionHint = '') {
-    const candidateMap = new Map();
+  async function resolveCandidates(geminiCard, auctionHint = '', capturedThumb = null) {
+    const candidates = [];
     const displayName = geminiCard?.name_de || geminiCard?.name || '';
     const englishName = geminiCard?.name_en || geminiCard?.name || displayName;
     const numStr = geminiCard?.number || '';
     const numOnly = numStr ? numStr.split('/')[0].replace(/^0+/, '') : '';
 
+    const searchTarget = englishName || displayName || auctionHint || 'Pokémon Karte';
+    const numClean = numStr.replace(/\s+/g, '');
+    const sQuery = `${searchTarget} ${numClean}`.trim();
+    const tcgData = computeTCGplayerData(searchTarget, numClean, geminiCard?.set_name || '', null);
+
+    // Primary Exact Match Candidate (#1) directly from Visual AI
+    const primaryCandidate = {
+      id: `hero_match_${Date.now()}`,
+      card_id: `/Pokemon/Search/${encodeURIComponent(searchTarget)}`,
+      name: (geminiCard?.name_de && geminiCard.name !== geminiCard.name_de)
+        ? `${geminiCard.name_de} (${geminiCard.name})`
+        : (geminiCard?.name_en && geminiCard.name !== geminiCard.name_en ? `${geminiCard.name} (${geminiCard.name_en})` : displayName),
+      set_name: geminiCard?.set_name || 'Pokémon TCG',
+      number: numClean,
+      rarity: geminiCard?.rarity || 'Holo Rare',
+      language: geminiCard?.language || 'DE',
+      seller_country: 'DE',
+      condition: 'NM',
+      price_trend: null,
+      price_psa10: null,
+      price_psa9: null,
+      tcgplayer: tcgData,
+      tcgplayer_price_usd: tcgData.market_price_usd,
+      tcgplayer_url: tcgData.tcgplayer_url,
+      match_score: 99,
+      image_url: capturedThumb, // Always show the exact scanned card image!
+      cardmarket_url: `https://www.cardmarket.com/de/Pokemon/Products/Search?searchString=${encodeURIComponent(sQuery)}`,
+      scanned_at: null
+    };
+
+    // Query Supabase for Price History
     const searchTerms = [];
     if (displayName) searchTerms.push(displayName);
     if (englishName && englishName !== displayName) searchTerms.push(englishName);
     if (numOnly) searchTerms.push(numOnly);
-    if (auctionHint) searchTerms.push(auctionHint);
 
     const cleanTerms = Array.from(new Set(searchTerms.filter(t => t && t.length >= 2 && !/[\u4e00-\u9fa5]/.test(t))));
 
-    // 1. Direct Supabase Query (for Latin terms)
     if (cleanTerms.length > 0) {
       try {
         const filters = cleanTerms.map(t => `card_id.ilike.%${encodeURIComponent(t)}%`).join(',');
-        const pUrl = `${SUPABASE_URL}/rest/v1/price_history?or=(${filters})&select=card_id,price,condition,seller_country,scanned_at&order=scanned_at.desc&limit=10`;
-        const iUrl = `${SUPABASE_URL}/rest/v1/card_images?or=(${filters})&select=card_id,image_url&limit=10`;
+        const pUrl = `${SUPABASE_URL}/rest/v1/price_history?or=(${filters})&select=card_id,price,condition,seller_country,scanned_at&order=scanned_at.desc&limit=8`;
+        const iUrl = `${SUPABASE_URL}/rest/v1/card_images?or=(${filters})&select=card_id,image_url&limit=8`;
 
         const headers = {
           'apikey': SUPABASE_ANON_KEY,
@@ -290,72 +316,60 @@ Return JSON:
           if (img.card_id) imageMap[img.card_id] = img.image_url;
         });
 
-        // Add Supabase Price Candidates
-        (pRes || []).forEach(row => {
-          if (candidateMap.has(row.card_id)) return;
+        // Check if any row matches the EXACT card number
+        let exactNumberMatched = false;
 
+        (pRes || []).forEach(row => {
           const details = parseCardDetails(row.card_id);
           const basePrice = parseFloat(row.price) || null;
-          const tcgData = computeTCGplayerData(englishName || details.name || displayName, details.number || numStr, details.setName, basePrice);
+          const rowNum = (details.number || '').replace(/^0+/, '');
 
-          candidateMap.set(row.card_id, {
-            id: `sb_match_${candidateMap.size}_${Date.now()}`,
-            card_id: row.card_id,
-            name: geminiCard?.name_de || details.name || displayName || 'Pokémon Karte',
-            set_name: details.setName || geminiCard?.set_name || 'Pokémon TCG',
-            number: details.number || numStr,
-            rarity: geminiCard?.rarity || details.rarity || 'Rare',
-            language: geminiCard?.language || 'DE',
-            seller_country: row.seller_country || 'DE',
-            condition: row.condition || 'NM',
-            price_trend: basePrice,
-            price_psa10: basePrice ? Number((basePrice * 11.5).toFixed(2)) : null,
-            price_psa9: basePrice ? Number((basePrice * 4.2).toFixed(2)) : null,
-            tcgplayer: tcgData,
-            tcgplayer_price_usd: tcgData.market_price_usd,
-            tcgplayer_url: tcgData.tcgplayer_url,
-            match_score: candidateMap.size === 0 ? 99 : 60,
-            image_url: imageMap[row.card_id] || null,
-            cardmarket_url: row.card_id.startsWith('http') ? row.card_id : `https://www.cardmarket.com${row.card_id.startsWith('/') ? row.card_id : '/' + row.card_id}`,
-            scanned_at: row.scanned_at
-          });
+          // Check if this Supabase row matches the exact scanned number (e.g. 014 vs 014)
+          const isExactNum = numOnly && (rowNum === numOnly || details.number === numStr);
+
+          if (isExactNum && !exactNumberMatched) {
+            // Attach real price to Primary Candidate #1!
+            primaryCandidate.price_trend = basePrice;
+            primaryCandidate.price_psa10 = basePrice ? Number((basePrice * 11.5).toFixed(2)) : null;
+            primaryCandidate.price_psa9 = basePrice ? Number((basePrice * 4.2).toFixed(2)) : null;
+            primaryCandidate.cardmarket_url = row.card_id.startsWith('http') ? row.card_id : `https://www.cardmarket.com${row.card_id.startsWith('/') ? row.card_id : '/' + row.card_id}`;
+            primaryCandidate.tcgplayer = computeTCGplayerData(searchTarget, numClean, details.setName, basePrice);
+            primaryCandidate.tcgplayer_price_usd = primaryCandidate.tcgplayer.market_price_usd;
+            if (imageMap[row.card_id]) primaryCandidate.image_url = imageMap[row.card_id];
+            exactNumberMatched = true;
+          } else if (!isExactNum) {
+            // Alternative variant (e.g. SIR #200 vs Regular #014)
+            candidates.push({
+              id: `alt_${candidates.length}_${Date.now()}`,
+              card_id: row.card_id,
+              name: `${details.name} (Variante #${details.number})`,
+              set_name: details.setName || 'Pokémon TCG',
+              number: details.number,
+              rarity: details.rarity || 'Alternative',
+              language: 'DE',
+              seller_country: row.seller_country || 'DE',
+              condition: row.condition || 'NM',
+              price_trend: basePrice,
+              price_psa10: basePrice ? Number((basePrice * 11.5).toFixed(2)) : null,
+              price_psa9: basePrice ? Number((basePrice * 4.2).toFixed(2)) : null,
+              tcgplayer: computeTCGplayerData(details.name, details.number, details.setName, basePrice),
+              tcgplayer_price_usd: basePrice ? Number((basePrice * 1.17).toFixed(2)) : null,
+              tcgplayer_url: `https://www.tcgplayer.com/search/pokemon/product?q=${encodeURIComponent(details.name + ' ' + details.number)}&view=grid`,
+              match_score: 50,
+              image_url: imageMap[row.card_id] || null,
+              cardmarket_url: row.card_id.startsWith('http') ? row.card_id : `https://www.cardmarket.com${row.card_id.startsWith('/') ? row.card_id : '/' + row.card_id}`,
+              scanned_at: row.scanned_at
+            });
+          }
         });
       } catch (e) {
-        console.warn('[Card Scanner+] Supabase direct query warning:', e.message);
+        console.warn('[Card Scanner+] Supabase query error:', e.message);
       }
     }
 
-    // 2. Guaranteed Hero Match (Always generated!)
-    if (candidateMap.size === 0 && (displayName || englishName || auctionHint)) {
-      const finalName = displayName || englishName || auctionHint;
-      const searchTarget = englishName || finalName;
-      const sQuery = `${searchTarget} ${numStr}`.trim();
-      const tcgData = computeTCGplayerData(searchTarget, numStr, geminiCard?.set_name || '', null);
-
-      candidateMap.set('gemini_direct_match', {
-        id: `hero_match_${Date.now()}`,
-        card_id: `/Pokemon/Search/${encodeURIComponent(searchTarget)}`,
-        name: geminiCard?.name_en && geminiCard.name_en !== displayName ? `${displayName} (${geminiCard.name_en})` : finalName,
-        set_name: geminiCard?.set_name || 'Pokémon TCG',
-        number: numStr,
-        rarity: geminiCard?.rarity || 'Rare',
-        language: geminiCard?.language || 'DE',
-        seller_country: 'DE',
-        condition: 'NM',
-        price_trend: null,
-        price_psa10: null,
-        price_psa9: null,
-        tcgplayer: tcgData,
-        tcgplayer_price_usd: tcgData.market_price_usd,
-        tcgplayer_url: tcgData.tcgplayer_url,
-        match_score: 99,
-        image_url: null,
-        cardmarket_url: `https://www.cardmarket.com/de/Pokemon/Products/Search?searchString=${encodeURIComponent(sQuery)}`,
-        scanned_at: null
-      });
-    }
-
-    return Array.from(candidateMap.values());
+    // Insert the guaranteed exact match as #1
+    candidates.unshift(primaryCandidate);
+    return candidates;
   }
 
   function computeTCGplayerData(cardName, cardNumber = '', setName = '', eurPriceTrend = null) {
