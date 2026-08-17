@@ -1,6 +1,6 @@
 /**
- * Card Scanner+ Universal Viewfinder & Smart Image Snapper
- * Fixed full-screen overlay (never trapped in sub-containers) with Auto-Snap to open product images
+ * Card Scanner+ Universal Viewfinder & Smart Card Snapper
+ * Accurately locks onto foreground card images (Aspect Ratio 1:1.40) & modal photos
  */
 
 class CardTracker {
@@ -80,7 +80,7 @@ class CardTracker {
           <span style="display:inline-block; width:6px; height:6px; background:#34d399; border-radius:50%; box-shadow: 0 0 6px #34d399;"></span>
           ⚡ KARTEN-ZIEL
         </span>
-        <button id="cs-btn-snap-img" style="pointer-events: auto; background: rgba(15, 23, 42, 0.85); color: #cbd5e1; font-family: sans-serif; font-size: 9px; font-weight: 600; padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.15); cursor: pointer;" title="Automatisch auf offenes Bild einrasten">
+        <button id="cs-btn-snap-img" style="pointer-events: auto; background: rgba(15, 23, 42, 0.85); color: #cbd5e1; font-family: sans-serif; font-size: 9px; font-weight: 600; padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.15); cursor: pointer;" title="Automatisch auf offene Karte einrasten">
           🎯 Einrasten
         </button>
       </div>
@@ -107,8 +107,8 @@ class CardTracker {
     this.applyBoxStyle();
     this.bindEvents();
 
-    // Auto-snap to open image on first load
-    setTimeout(() => this.autoSnapToProminentImage(), 600);
+    // Auto-snap to foreground card
+    setTimeout(() => this.autoSnapToProminentImage(), 500);
   }
 
   applyBoxStyle() {
@@ -181,35 +181,68 @@ class CardTracker {
   }
 
   /**
-   * Automatically finds the largest prominent card image on screen (e.g. open Pre-Bid photo or Video)
+   * Intelligently locks onto the foreground card (Filtering out 9:16 stream backgrounds)
    */
   autoSnapToProminentImage() {
-    const images = Array.from(document.querySelectorAll('img, video')).filter(el => {
-      if (el.closest('#cardscanner-root') || el.closest('#cardscanner-tracker-layer')) return false;
-      const rect = el.getBoundingClientRect();
-      return rect.width >= 150 && rect.height >= 180 && rect.top < window.innerHeight && rect.bottom > 0;
+    // 1. Modal / Dialog card images (e.g. opened product photos)
+    const modalImgs = Array.from(document.querySelectorAll('[role="dialog"] img, [class*="modal"] img, [class*="overlay"] img, [class*="product"] img, [data-testid*="product"] img')).filter(img => {
+      if (img.closest('#cardscanner-root') || img.closest('#cardscanner-tracker-layer')) return false;
+      const r = img.getBoundingClientRect();
+      const ratio = r.height / r.width;
+      return r.width >= 120 && r.height >= 160 && ratio >= 1.15 && ratio <= 1.65;
     });
 
-    // Sort by area to get the most prominent card image in focus
-    images.sort((a, b) => {
-      const rA = a.getBoundingClientRect();
-      const rB = b.getBoundingClientRect();
-      return (rB.width * rB.height) - (rA.width * rA.height);
+    // 2. Element directly at screen center (Card Modal or Stream)
+    const centerEl = document.elementFromPoint(window.innerWidth / 2, window.innerHeight / 2);
+    let centerImg = null;
+    if (centerEl && !centerEl.closest('#cardscanner-root') && !centerEl.closest('#cardscanner-tracker-layer')) {
+      centerImg = centerEl.tagName === 'IMG' ? centerEl : centerEl.querySelector('img');
+    }
+
+    // 3. All visible images with authentic Trading Card Aspect Ratio (1 : 1.25 to 1.55)
+    const allCardImgs = Array.from(document.querySelectorAll('img')).filter(img => {
+      if (img.closest('#cardscanner-root') || img.closest('#cardscanner-tracker-layer')) return false;
+      const r = img.getBoundingClientRect();
+      if (r.width < 120 || r.height < 160 || r.top < 0 || r.bottom > window.innerHeight) return false;
+      const ratio = r.height / r.width;
+      return ratio >= 1.22 && ratio <= 1.55; // Strict trading card ratio!
     });
 
-    if (images.length > 0) {
-      const best = images[0];
-      const r = best.getBoundingClientRect();
+    let candidate = null;
 
+    if (modalImgs.length > 0) {
+      candidate = modalImgs[0];
+    } else if (centerImg) {
+      const cr = centerImg.getBoundingClientRect();
+      const crRatio = cr.height / cr.width;
+      if (cr.width >= 140 && cr.height >= 180 && crRatio >= 1.15 && crRatio <= 1.65) {
+        candidate = centerImg;
+      }
+    }
+
+    if (!candidate && allCardImgs.length > 0) {
+      // Pick the image closest to center of screen
+      allCardImgs.sort((a, b) => {
+        const rA = a.getBoundingClientRect();
+        const rB = b.getBoundingClientRect();
+        const distA = Math.hypot((rA.left + rA.width / 2) - window.innerWidth / 2, (rA.top + rA.height / 2) - window.innerHeight / 2);
+        const distB = Math.hypot((rB.left + rB.width / 2) - window.innerWidth / 2, (rB.top + rB.height / 2) - window.innerHeight / 2);
+        return distA - distB;
+      });
+      candidate = allCardImgs[0];
+    }
+
+    if (candidate) {
+      const r = candidate.getBoundingClientRect();
       this.pos = {
-        left: Math.round(r.left),
-        top: Math.round(r.top),
-        width: Math.round(r.width),
-        height: Math.round(r.height)
+        left: Math.max(8, Math.round(r.left - 4)),
+        top: Math.max(8, Math.round(r.top - 4)),
+        width: Math.round(r.width + 8),
+        height: Math.round(r.height + 8)
       };
 
       this.applyBoxStyle();
-      console.log('[Card Scanner+] Auto-snapped reticle to prominent card element:', best, this.pos);
+      console.log('[Card Scanner+] ✓ Perfectly locked onto foreground card image:', candidate, this.pos);
       return true;
     }
 
@@ -224,10 +257,9 @@ class CardTracker {
       const target = e.target;
       if (target.closest('#cardscanner-root') || target.closest('#cardscanner-tracker-layer')) return;
 
-      // When clicking a product or image, trigger auto-snap after modal renders
       setTimeout(() => {
         this.autoSnapToProminentImage();
-      }, 350);
+      }, 300);
     }, true);
   }
 
