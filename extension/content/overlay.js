@@ -199,7 +199,7 @@ class CardScannerOverlay {
           </div>
         </div>` : ''}
 
-        <a href="${cardmarketUrl}" target="_blank" rel="noopener noreferrer" class="cs-btn-cardmarket">
+        <a href="${cardmarketUrl}" target="_blank" rel="noopener noreferrer" class="cs-btn-cardmarket" id="cs-btn-open-cm">
           Auf Cardmarket öffnen ↗
         </a>
       `;
@@ -210,7 +210,7 @@ class CardScannerOverlay {
 
       const cmSearchUrl = detectedCode
         ? `https://www.cardmarket.com/de/Pokemon/Products/Search?searchString=${encodeURIComponent(detectedCode)}`
-        : 'https://www.cardmarket.com/de/Pokemon';
+        : 'https://www.cardmarket.com/de/Pokemon/Products/Search';
 
       bodyContent = `
         <div style="text-align: center; padding: 14px 6px; color: #94a3b8;">
@@ -228,10 +228,10 @@ class CardScannerOverlay {
           </h3>
           
           <p style="font-size: 12px; line-height: 1.4; margin-bottom: 12px; color: #94a3b8;">
-            ${detectedCode ? 'Nummer nicht in der Datenbank gefunden.' : 'Halte die Kartennummer (z. B. 025/165) mittig vor die Kamera und drücke <b style="color:#818cf8;">S</b>.'}
+            ${detectedCode ? 'Nummer nicht in der Datenbank gefunden.' : 'Tippe den Namen oben ein oder halte die Nummer (z. B. 025/165) mittig vor die Kamera & drücke <b style="color:#818cf8;">S</b>.'}
           </p>
           
-          <a href="${cmSearchUrl}" target="_blank" class="cs-btn-cardmarket" style="max-width:240px; margin: 0 auto;">
+          <a href="${cmSearchUrl}" target="_blank" class="cs-btn-cardmarket" id="cs-btn-fallback-cm" style="max-width:260px; margin: 0 auto;">
             🔍 ${detectedCode ? `"${detectedCode}" auf Cardmarket suchen ↗` : 'Auf Cardmarket suchen ↗'}
           </a>
         </div>
@@ -245,7 +245,7 @@ class CardScannerOverlay {
       <div class="cs-header">
         <div class="cs-search-row">
           <div class="cs-search-box">
-            <input type="text" class="cs-search-input" id="cs-search-input" placeholder="Karten oder Nummern suchen..." value="${prefillValue}" />
+            <input type="text" class="cs-search-input" id="cs-search-input" placeholder="Kartenname oder Nummer..." value="${prefillValue}" />
             <span class="cs-search-icon">🔍</span>
           </div>
           <button class="cs-btn-icon" id="cs-btn-collapse" title="Minimieren">✕</button>
@@ -325,6 +325,19 @@ class CardScannerOverlay {
           }
         }
       };
+
+      // Also dynamically update Cardmarket search button when user types in search box
+      const fallbackBtn = this.shadow.getElementById('cs-btn-fallback-cm');
+      if (fallbackBtn) {
+        fallbackBtn.onclick = (e) => {
+          const query = searchInp.value.trim() || (this.state.lastScanMeta && this.state.lastScanMeta.detectedCode);
+          if (query) {
+            fallbackBtn.href = `https://www.cardmarket.com/de/Pokemon/Products/Search?searchString=${encodeURIComponent(query)}`;
+          } else {
+            fallbackBtn.href = 'https://www.cardmarket.com/de/Pokemon/Products/Search';
+          }
+        };
+      }
     }
   }
 
