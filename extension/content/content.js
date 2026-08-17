@@ -266,18 +266,19 @@ Return JSON:
 
     const searchTarget = englishName || displayName || auctionHint || 'Pokémon Karte';
     const numClean = numStr.replace(/\s+/g, '');
+    const firstNum = numClean.split('/')[0].trim();
 
-    // Precise Cardmarket Search String using Set Code Box (e.g. "cs5.5C 014/066" or "SV6 120/101")
+    // Precise Cardmarket Search String: Set-Code + Only First Number (e.g. "cs5.5C 014" or "SV6 120")
     let cardmarketSearch = '';
-    if (setCode && numClean) {
-      cardmarketSearch = `${setCode} ${numClean}`.trim();
-    } else if (englishName && numClean) {
-      cardmarketSearch = `${englishName} ${numClean}`.trim();
+    if (setCode && firstNum) {
+      cardmarketSearch = `${setCode} ${firstNum}`.trim();
+    } else if (englishName && firstNum) {
+      cardmarketSearch = `${englishName} ${firstNum}`.trim();
     } else {
-      cardmarketSearch = `${searchTarget} ${numClean}`.trim();
+      cardmarketSearch = `${searchTarget} ${firstNum}`.trim();
     }
 
-    const tcgData = computeTCGplayerData(searchTarget, numClean, geminiCard?.set_name || setCode, null);
+    const tcgData = computeTCGplayerData(searchTarget, firstNum, geminiCard?.set_name || setCode, null);
 
     // Primary Exact Match Candidate (#1) directly from Visual AI
     const primaryCandidate = {
