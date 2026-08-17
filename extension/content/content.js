@@ -1,10 +1,10 @@
 /**
  * Card Scanner+ Content Script (Master Orchestrator)
- * Pixel-Perfect Viewfinder Slicer, Continuous Auto-Scan & Gemini AI Client
+ * Pixel-Perfect Viewfinder Slicer, Continuous Auto-Scan (Hotkey 'A') & Gemini AI Client
  */
 
 (function () {
-  console.log('[Card Scanner+] Content Script with Pixel-Perfect Viewfinder loaded.');
+  console.log('[Card Scanner+] Content Script with Auto-Scan & Hotkey A loaded.');
 
   let backendUrl = 'https://cardscanner-nine.vercel.app';
   let hotkeyChar = 's';
@@ -123,16 +123,29 @@
 
     if (isInputActive) return;
 
+    // Hotkey S: Single Scan
     if (e.key && e.key.toLowerCase() === hotkeyChar.toLowerCase()) {
       e.preventDefault();
       console.log(`[Card Scanner+] Hotkey '${e.key}' triggered capture.`);
       performAICapture(false);
+    }
+
+    // Hotkey A: Toggle Auto-Scan ON / OFF
+    if (e.key && e.key.toLowerCase() === 'a') {
+      e.preventDefault();
+      if (window.cardTracker) {
+        window.cardTracker.toggleAutoScan();
+      }
     }
   }, true);
 
   if (window.cardScannerOverlay) {
     window.cardScannerOverlay.onCaptureClick = () => {
       performAICapture(false);
+    };
+
+    window.cardScannerOverlay.onToggleAutoScan = () => {
+      if (window.cardTracker) window.cardTracker.toggleAutoScan();
     };
 
     window.cardScannerOverlay.onManualSearch = (query) => {
@@ -162,7 +175,6 @@
       const currentLiveBid = getCurrentWhatnotBid();
       console.log('[Card Scanner+] Capture Initiated:', { isAuto, auctionHint, currentLiveBid });
 
-      // High-Res Screen Capture of exact Viewfinder Box
       const imageBase64 = await grabPixelPerfectBoxImage();
 
       if (!imageBase64 && !auctionHint) {
@@ -203,7 +215,6 @@
             boxRect = { left: window.innerWidth * 0.2, top: window.innerHeight * 0.15, width: window.innerWidth * 0.6, height: window.innerHeight * 0.65 };
           }
 
-          // Exact physical pixel coordinates on captured screen
           const sx = Math.max(0, Math.round(boxRect.left * dpr));
           const sy = Math.max(0, Math.round(boxRect.top * dpr));
           const sw = Math.min(img.width - sx, Math.round(boxRect.width * dpr));
@@ -261,17 +272,18 @@
       const data = await res.json();
       console.log('[Card Scanner+] AI Backend response:', data);
 
-      const firstCand = data.candidates?.[0];
+      const candidateList = Array.isArray(data.candidates) ? data.candidates : [];
+      const firstCand = candidateList[0];
       const detectedTitle = firstCand ? `${firstCand.name} (${firstCand.number || firstCand.set_name || ''})` : null;
-      const isMissingKey = data.status === 'NO_API_KEY' || (!geminiApiKey && data.candidates?.length === 0);
+      const isMissingKey = data.status === 'NO_API_KEY';
 
       if (window.cardScannerOverlay) {
-        window.cardScannerOverlay.showCandidates(data.candidates || [], 0, {
+        window.cardScannerOverlay.showCandidates(candidateList, 0, {
           detectedCode: detectedTitle,
           capturedThumbnail: imageBase64,
           currentBid: currentLiveBid,
           missingApiKey: isMissingKey,
-          apiMessage: data.apiMessage || (data.candidates?.length === 0 ? 'Keine Karte im Bildausschnitt identifiziert.' : null)
+          apiMessage: data.apiMessage
         });
       }
     } catch (err) {
@@ -304,8 +316,9 @@
 
       if (res.ok) {
         const data = await res.json();
+        const candidateList = Array.isArray(data.candidates) ? data.candidates : [];
         if (window.cardScannerOverlay) {
-          window.cardScannerOverlay.showCandidates(data.candidates || [], 0, {
+          window.cardScannerOverlay.showCandidates(candidateList, 0, {
             detectedCode: query
           });
         }
