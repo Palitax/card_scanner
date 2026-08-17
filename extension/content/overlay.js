@@ -398,9 +398,6 @@ class CardScannerOverlay {
       btnSaveKey.onclick = async () => {
         const val = inpKey.value.trim();
         if (val) {
-          if (!val.startsWith('AIzaSy')) {
-            alert('⚠️ Achtung: Ein Google Gemini API Key beginnt immer mit "AIzaSy...".\n\nDu hast einen Schlüssel eingefügt, der mit "' + val.slice(0, 5) + '" beginnt. Bitte erstelle einen kostenlosen Key auf: aistudio.google.com/app/apikey');
-          }
           this.state.geminiApiKey = val;
           await chrome.storage.local.set({ geminiApiKey: val });
           if (this.onSaveApiKey) this.onSaveApiKey(val);
