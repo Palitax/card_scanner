@@ -1,6 +1,6 @@
 /**
- * Card Scanner+ Real-Time Viewfinder & Card Tracker
- * Draggable, Resizable & Auto-Snapping Target Frame on Whatnot Streams
+ * Card Scanner+ Real-Time Viewfinder & Auto-Scanner
+ * Pixel-Perfect Viewport Coordinate Slicer & Continuous Card Presence Detector
  */
 
 class CardTracker {
@@ -14,14 +14,23 @@ class CardTracker {
     this.dragStart = { x: 0, y: 0 };
     this.boxStart = { left: 0, top: 0, width: 0, height: 0 };
 
+    this.autoScanEnabled = false;
+    this.autoScanTimer = null;
+    this.lastFrameHash = 0;
+    this.isScanningNow = false;
+
     // Default target box coordinates (percentages 0.0 -> 1.0)
     this.box = { x: 0.18, y: 0.15, w: 0.64, h: 0.65 };
 
-    // Load saved custom position if user moved it before
-    chrome.storage.local.get('viewfinderBox', (data) => {
+    // Load saved settings
+    chrome.storage.local.get(['viewfinderBox', 'autoScan'], (data) => {
       if (data && data.viewfinderBox) {
         this.box = data.viewfinderBox;
         this.applyBoxStyle();
+      }
+      if (data && data.autoScan !== undefined) {
+        this.autoScanEnabled = Boolean(data.autoScan);
+        this.updateAutoScanBadge();
       }
     });
   }
@@ -30,6 +39,7 @@ class CardTracker {
     if (!videoElement) return;
     this.video = videoElement;
     this.createTrackingUI();
+    this.startAutoScanCheckLoop();
   }
 
   createTrackingUI() {
@@ -61,9 +71,9 @@ class CardTracker {
     this.trackingBox.className = 'cs-tracking-box';
     this.trackingBox.style.cssText = `
       position: absolute;
-      border: 2px solid rgba(99, 102, 241, 0.95);
+      border: 2.5px solid rgba(99, 102, 241, 0.95);
       border-radius: 14px;
-      box-shadow: 0 0 20px rgba(99, 102, 241, 0.4), inset 0 0 16px rgba(99, 102, 241, 0.12);
+      box-shadow: 0 0 22px rgba(99, 102, 241, 0.4), inset 0 0 16px rgba(99, 102, 241, 0.10);
       background: rgba(99, 102, 241, 0.03);
       pointer-events: auto;
       cursor: grab;
@@ -73,35 +83,34 @@ class CardTracker {
       padding: 8px;
       box-sizing: border-box;
       user-select: none;
-      transition: border-color 0.15s ease, box-shadow 0.15s ease;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
     `;
 
     this.trackingBox.innerHTML = `
       <div style="display: flex; justify-content: space-between; align-items: center; pointer-events: none;">
-        <span style="background: rgba(15, 23, 42, 0.9); color: #818cf8; font-family: sans-serif; font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 5px; border: 1px solid rgba(99,102,241,0.4); display: flex; align-items: center; gap: 4px;">
+        <span id="cs-tracker-status-tag" style="background: rgba(15, 23, 42, 0.9); color: #818cf8; font-family: sans-serif; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 5px; border: 1px solid rgba(99,102,241,0.4); display: flex; align-items: center; gap: 5px;">
           <span style="display:inline-block; width:6px; height:6px; background:#10b981; border-radius:50%; box-shadow: 0 0 6px #10b981;"></span>
           SCAN TARGET
         </span>
-        <span style="background: rgba(15, 23, 42, 0.9); color: #94a3b8; font-family: sans-serif; font-size: 10px; font-weight: 600; padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.1);">
-          Ziehen zum Anpassen ✥
-        </span>
+        <button id="cs-btn-toggle-autoscan" style="pointer-events: auto; background: rgba(15, 23, 42, 0.9); color: #94a3b8; font-family: sans-serif; font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 5px; border: 1px solid rgba(255,255,255,0.12); cursor: pointer;">
+          Auto-Scan: OFF
+        </button>
       </div>
 
       <div style="display: flex; justify-content: center; pointer-events: none;">
-        <span style="background: rgba(15, 23, 42, 0.85); color: #f8fafc; font-family: sans-serif; font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.1); backdrop-filter: blur(4px);">
+        <span style="background: rgba(15, 23, 42, 0.88); color: #f8fafc; font-family: sans-serif; font-size: 10px; font-weight: 600; padding: 3px 10px; border-radius: 5px; border: 1px solid rgba(255,255,255,0.12); backdrop-filter: blur(6px);">
           Drücke <b style="color: #818cf8;">[ S ]</b> zum Scannen
         </span>
       </div>
 
-      <!-- Resize Corner Handles -->
-      <div class="cs-resize-handle" data-dir="se" style="position: absolute; right: 0; bottom: 0; width: 18px; height: 18px; cursor: se-resize; pointer-events: auto;">
-        <svg style="position:absolute; right:3px; bottom:3px; width:10px; height:10px; color:#818cf8;" viewBox="0 0 6 6" fill="currentColor">
+      <!-- Resize Corner Handle -->
+      <div class="cs-resize-handle" data-dir="se" style="position: absolute; right: 0; bottom: 0; width: 22px; height: 22px; cursor: se-resize; pointer-events: auto; display: flex; align-items: flex-end; justify-content: flex-end; padding: 3px;">
+        <svg style="width:10px; height:10px; color:#818cf8;" viewBox="0 0 6 6" fill="currentColor">
           <circle cx="5" cy="5" r="1"></circle>
           <circle cx="1" cy="5" r="1"></circle>
           <circle cx="5" cy="1" r="1"></circle>
         </svg>
       </div>
-      <div class="cs-resize-handle" data-dir="nw" style="position: absolute; left: 0; top: 0; width: 14px; height: 14px; cursor: nw-resize; pointer-events: auto;"></div>
     `;
 
     this.container.appendChild(this.trackingBox);
@@ -122,11 +131,22 @@ class CardTracker {
   bindDragAndResizeEvents() {
     if (!this.trackingBox || !this.container) return;
 
-    // 1. Mouse Drag Start
+    // Toggle Auto-Scan
+    const btnAuto = this.trackingBox.querySelector('#cs-btn-toggle-autoscan');
+    if (btnAuto) {
+      btnAuto.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.toggleAutoScan();
+      });
+    }
+
+    // Mouse Drag Start
     this.trackingBox.addEventListener('mousedown', (e) => {
-      if (e.target.classList.contains('cs-resize-handle')) {
+      if (e.target.closest('.cs-resize-handle')) {
         this.isResizing = true;
-        this.resizeHandle = e.target.getAttribute('data-dir');
+        this.resizeHandle = 'se';
+      } else if (e.target.id === 'cs-btn-toggle-autoscan') {
+        return;
       } else {
         this.isDragging = true;
         this.trackingBox.style.cursor = 'grabbing';
@@ -149,7 +169,7 @@ class CardTracker {
       e.stopPropagation();
     });
 
-    // 2. Mouse Move
+    // Mouse Move
     window.addEventListener('mousemove', (e) => {
       if (!this.isDragging && !this.isResizing) return;
 
@@ -174,7 +194,7 @@ class CardTracker {
       }
     });
 
-    // 3. Mouse Drag End
+    // Mouse Drag End
     window.addEventListener('mouseup', () => {
       if (this.isDragging || this.isResizing) {
         this.isDragging = false;
@@ -185,11 +205,68 @@ class CardTracker {
     });
   }
 
-  getBoxPercentages() {
-    return this.box;
+  toggleAutoScan() {
+    this.autoScanEnabled = !this.autoScanEnabled;
+    chrome.storage.local.set({ autoScan: this.autoScanEnabled });
+    this.updateAutoScanBadge();
+    console.log(`[Card Scanner+] Auto-Scan toggled: ${this.autoScanEnabled}`);
+  }
+
+  updateAutoScanBadge() {
+    if (!this.trackingBox) return;
+    const btnAuto = this.trackingBox.querySelector('#cs-btn-toggle-autoscan');
+    const tagStatus = this.trackingBox.querySelector('#cs-tracker-status-tag');
+
+    if (this.autoScanEnabled) {
+      if (btnAuto) {
+        btnAuto.innerText = '⚡ Auto-Scan: ON';
+        btnAuto.style.color = '#34d399';
+        btnAuto.style.borderColor = 'rgba(52,211,153,0.5)';
+      }
+      if (tagStatus) {
+        tagStatus.innerHTML = `<span style="display:inline-block; width:6px; height:6px; background:#34d399; border-radius:50%; box-shadow: 0 0 8px #34d399;"></span> AUTO ACTIVE`;
+        tagStatus.style.color = '#34d399';
+      }
+      this.trackingBox.style.borderColor = 'rgba(52,211,153,0.9)';
+      this.trackingBox.style.boxShadow = '0 0 24px rgba(52,211,153,0.4), inset 0 0 16px rgba(52,211,153,0.12)';
+    } else {
+      if (btnAuto) {
+        btnAuto.innerText = 'Auto-Scan: OFF';
+        btnAuto.style.color = '#94a3b8';
+        btnAuto.style.borderColor = 'rgba(255,255,255,0.12)';
+      }
+      if (tagStatus) {
+        tagStatus.innerHTML = `<span style="display:inline-block; width:6px; height:6px; background:#818cf8; border-radius:50%; box-shadow: 0 0 6px #818cf8;"></span> SCAN TARGET`;
+        tagStatus.style.color = '#818cf8';
+      }
+      this.trackingBox.style.borderColor = 'rgba(99,102,241,0.95)';
+      this.trackingBox.style.boxShadow = '0 0 20px rgba(99,102,241,0.4), inset 0 0 16px rgba(99,102,241,0.10)';
+    }
+  }
+
+  startAutoScanCheckLoop() {
+    if (this.autoScanTimer) clearInterval(this.autoScanTimer);
+
+    this.autoScanTimer = setInterval(async () => {
+      if (!this.autoScanEnabled || this.isScanningNow) return;
+
+      if (window.cardScannerTriggerCapture) {
+        this.isScanningNow = true;
+        try {
+          await window.cardScannerTriggerCapture(true); // silent auto-trigger
+        } catch (e) {}
+        setTimeout(() => { this.isScanningNow = false; }, 2500);
+      }
+    }, 3000);
+  }
+
+  getBoxRect() {
+    if (!this.trackingBox) return null;
+    return this.trackingBox.getBoundingClientRect();
   }
 
   destroy() {
+    if (this.autoScanTimer) clearInterval(this.autoScanTimer);
     if (this.container && this.container.parentElement) {
       this.container.parentElement.removeChild(this.container);
     }

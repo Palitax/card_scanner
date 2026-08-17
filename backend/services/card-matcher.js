@@ -8,18 +8,25 @@ import { searchPriceHistory, searchCardImages, fetchCardImages, parseCardDetails
 import { memoryCache } from './cache.js';
 
 export async function matchCandidates(params = {}) {
-  const { imageBase64, customApiKey, number, total, promoCode, setCode, code, artist, hp, auctionHint, query } = params;
+  const { imageBase64, customApiKey, number, total, promoCode, setCode, code, auctionHint, query } = params;
 
-  const hasApiKey = Boolean(customApiKey || process.env.GEMINI_API_KEY);
   let geminiCard = null;
+  let apiStatus = 'OK';
+  let apiMessage = null;
 
   // 1. If an image is provided, run high-speed Gemini Flash Vision AI
-  if (imageBase64 && hasApiKey) {
-    geminiCard = await identifyCardWithGemini(imageBase64, customApiKey);
+  if (imageBase64) {
+    const geminiRes = await identifyCardWithGemini(imageBase64, customApiKey);
+    if (geminiRes && geminiRes.data) {
+      geminiCard = geminiRes.data;
+    } else if (geminiRes && geminiRes.error) {
+      apiStatus = geminiRes.error;
+      apiMessage = geminiRes.message;
+    }
   }
 
   // 2. Build Search Keys & Cache Key
-  const cardName = geminiCard?.card_name || geminiCard?.card_name_de || geminiCard?.card_name_en || query || '';
+  const cardName = geminiCard?.card_name_de || geminiCard?.card_name || query || '';
   const detectedNumber = geminiCard?.card_number || number || '';
   const detectedSet = geminiCard?.set_name || setCode || '';
   const detectedCode = geminiCard?.full_number_code || code || '';
@@ -30,7 +37,7 @@ export async function matchCandidates(params = {}) {
     const cached = memoryCache.get(searchKey);
     if (cached) {
       console.log(`[Card Matcher] Cache Hit for '${searchKey}' (${cached.length} candidates)`);
-      return { candidates: cached, gemini_missing_key: !hasApiKey };
+      return { candidates: cached, status: 'SUCCESS', apiStatus, apiMessage };
     }
   }
 
@@ -48,8 +55,8 @@ export async function matchCandidates(params = {}) {
   }
 
   if (geminiCard) {
-    if (geminiCard.card_name) searchTerms.push(geminiCard.card_name);
     if (geminiCard.card_name_de) searchTerms.push(geminiCard.card_name_de);
+    if (geminiCard.card_name) searchTerms.push(geminiCard.card_name);
     if (geminiCard.card_number) searchTerms.push(geminiCard.card_number);
     if (geminiCard.full_number_code) searchTerms.push(geminiCard.full_number_code);
     if (geminiCard.set_code && geminiCard.card_number) {
@@ -91,11 +98,11 @@ export async function matchCandidates(params = {}) {
       candidateMap.set(row.card_id, {
         id: `match_${candidateMap.size}_${Date.now()}`,
         card_id: row.card_id,
-        name: details.name || geminiCard?.card_name || 'Pokémon Karte',
+        name: geminiCard?.card_name_de || details.name || geminiCard?.card_name || 'Pokémon Karte',
         set_name: details.setName || geminiCard?.set_name || 'Pokémon TCG',
         number: details.number || detectedNumber,
         rarity: geminiCard?.rarity || details.rarity,
-        language: (row.language || geminiCard?.language || 'EN').toUpperCase(),
+        language: (geminiCard?.language || row.language || 'DE').toUpperCase(),
         seller_country: row.seller_country || 'DE',
         condition: row.condition || 'NM',
         price_trend: basePrice,
@@ -121,11 +128,11 @@ export async function matchCandidates(params = {}) {
       candidateMap.set(imgRow.card_id, {
         id: `img_match_${candidateMap.size}_${Date.now()}`,
         card_id: imgRow.card_id,
-        name: details.name || geminiCard?.card_name || 'Pokémon Karte',
+        name: geminiCard?.card_name_de || details.name || geminiCard?.card_name || 'Pokémon Karte',
         set_name: details.setName || geminiCard?.set_name || 'Pokémon Expansion',
         number: details.number || detectedNumber,
         rarity: geminiCard?.rarity || details.rarity,
-        language: (geminiCard?.language || 'JP').toUpperCase(),
+        language: (geminiCard?.language || 'DE').toUpperCase(),
         seller_country: 'DE',
         condition: 'NM',
         price_trend: null,
@@ -133,7 +140,7 @@ export async function matchCandidates(params = {}) {
         price_psa9: null,
         match_score: candidateMap.size === 0 ? 95 : 55,
         image_url: imgRow.image_url,
-        cardmarket_url: `https://www.cardmarket.com/de/Pokemon/Products/Search?searchString=${encodeURIComponent(details.name || geminiCard?.card_name || '')}`,
+        cardmarket_url: `https://www.cardmarket.com/de/Pokemon/Products/Search?searchString=${encodeURIComponent(details.name || geminiCard?.card_name_de || geminiCard?.card_name || '')}`,
         scanned_at: null,
         gemini_meta: geminiCard
       });
@@ -142,8 +149,8 @@ export async function matchCandidates(params = {}) {
     }
   }
 
-  // If Gemini found a card but Supabase had no matching row in local DB:
-  if (candidateMap.size === 0 && geminiCard && geminiCard.card_name) {
+  // If Gemini found a card but Supabase had no matching price row:
+  if (candidateMap.size === 0 && geminiCard && (geminiCard.card_name || geminiCard.card_name_de)) {
     const displayName = geminiCard.card_name_de || geminiCard.card_name;
     const searchString = `${displayName} ${geminiCard.card_number || ''}`.trim();
 
@@ -153,14 +160,14 @@ export async function matchCandidates(params = {}) {
       name: displayName,
       set_name: geminiCard.set_name || 'Pokémon TCG',
       number: geminiCard.full_number_code || geminiCard.card_number || '',
-      rarity: geminiCard.rarity || 'Special Rare',
-      language: (geminiCard.language || 'JP').toUpperCase(),
+      rarity: geminiCard.rarity || 'Card',
+      language: (geminiCard.language || 'DE').toUpperCase(),
       seller_country: 'DE',
       condition: 'NM',
       price_trend: null,
       price_psa10: null,
       price_psa9: null,
-      match_score: 98,
+      match_score: 99,
       image_url: null,
       cardmarket_url: `https://www.cardmarket.com/de/Pokemon/Products/Search?searchString=${encodeURIComponent(searchString)}`,
       scanned_at: null,
@@ -174,5 +181,10 @@ export async function matchCandidates(params = {}) {
     memoryCache.set(searchKey, candidates);
   }
 
-  return { candidates, gemini_missing_key: !hasApiKey };
+  return {
+    candidates,
+    status: candidates.length > 0 ? 'SUCCESS' : (apiStatus !== 'OK' ? apiStatus : 'NO_MATCH'),
+    apiStatus,
+    apiMessage
+  };
 }

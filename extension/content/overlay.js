@@ -76,6 +76,7 @@ class CardScannerOverlay {
     const currentCard = activeCard || (candidates && candidates[selectedIndex]) || null;
     const currentBid = lastScanMeta?.currentBid || null;
     const missingApiKey = lastScanMeta?.missingApiKey || false;
+    const errorMessage = lastScanMeta?.errorMessage || lastScanMeta?.apiMessage || null;
 
     let bodyContent = '';
 
@@ -93,7 +94,7 @@ class CardScannerOverlay {
       const matchScore = currentCard.match_score || 99;
       const title = currentCard.name || 'Pokémon Karte';
       const subtitle = `${currentCard.set_name || 'Set'} • #${currentCard.number || ''}`;
-      const rarity = currentCard.rarity || 'Ultra Rare';
+      const rarity = currentCard.rarity || 'Card';
       
       const priceTrend = currentCard.price_trend;
       const pricePSA10 = currentCard.price_psa10 || (priceTrend ? Number((priceTrend * 11.5).toFixed(2)) : null);
@@ -226,7 +227,7 @@ class CardScannerOverlay {
         </a>
       `;
     } else {
-      // Empty / Not Found / Setup State
+      // Empty / Error / Setup State
       const detectedCode = lastScanMeta && lastScanMeta.detectedCode ? lastScanMeta.detectedCode : null;
       const thumb = lastScanMeta && lastScanMeta.capturedThumbnail ? lastScanMeta.capturedThumbnail : null;
 
@@ -237,12 +238,12 @@ class CardScannerOverlay {
       if (missingApiKey) {
         bodyContent = `
           <div style="text-align: center; padding: 14px 8px; color: #94a3b8;">
-            <div style="font-size: 30px; margin-bottom: 8px;">🔑</div>
+            <div style="font-size: 32px; margin-bottom: 8px;">🔑</div>
             <h3 style="color: #f8fafc; font-size: 14px; font-weight: 700; margin-bottom: 6px;">
-              Gemini Vision API Key erforderlich
+              Gemini Vision API Key fehlt
             </h3>
             <p style="font-size: 12px; line-height: 1.5; margin-bottom: 12px; color: #cbd5e1;">
-              Trage deinen kostenlosen Gemini API Key im <b>Extension-Popup (Icon oben rechts in Chrome)</b> ein, damit die KI-Kartenerkennung aktiv wird.
+              Klicke oben rechts in Chrome auf das <b>Card Scanner+ Icon</b> und trage deinen kostenlosen Gemini API Key ein.
             </p>
             <a href="https://aistudio.google.com/app/apikey" target="_blank" class="cs-btn-cardmarket" style="max-width:240px; margin: 0 auto; background:#4f46e5; border-color:#6366f1;">
               Kostenlosen Key holen ↗
@@ -262,11 +263,11 @@ class CardScannerOverlay {
             `}
             
             <h3 style="color: #f8fafc; font-size: 13px; margin-bottom: 4px;">
-              ${detectedCode ? `Erkannt: "${detectedCode}"` : 'Scan-Bereich Aktiv'}
+              ${errorMessage ? errorMessage : (detectedCode ? `Erkannt: "${detectedCode}"` : 'Scan-Bereich Aktiv')}
             </h3>
             
             <p style="font-size: 12px; line-height: 1.4; margin-bottom: 12px; color: #94a3b8;">
-              ${detectedCode ? 'Nummer nicht in der Datenbank gefunden.' : 'Ziehe den blauen Rahmen über die Karte des Streamers und drücke <b style="color:#818cf8;">S</b>.'}
+              ${detectedCode ? 'Nummer nicht in der Datenbank gefunden.' : 'Ziehe den blauen Rahmen über die Karte und drücke <b style="color:#818cf8;">S</b>.'}
             </p>
             
             <a href="${cmSearchUrl}" target="_blank" class="cs-btn-cardmarket" id="cs-btn-fallback-cm" style="max-width:260px; margin: 0 auto;">

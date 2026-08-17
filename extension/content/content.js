@@ -1,10 +1,10 @@
 /**
  * Card Scanner+ Content Script (Master Orchestrator)
- * Viewfinder Target Frame Grabber & Gemini Vision Client
+ * Pixel-Perfect Viewfinder Slicer, Continuous Auto-Scan & Gemini AI Client
  */
 
 (function () {
-  console.log('[Card Scanner+] Content Script with Interactive Viewfinder loaded.');
+  console.log('[Card Scanner+] Content Script with Pixel-Perfect Viewfinder loaded.');
 
   let backendUrl = 'https://cardscanner-nine.vercel.app';
   let hotkeyChar = 's';
@@ -30,7 +30,7 @@
         if (activeVideo !== v) {
           activeVideo = v;
           if (window.cardTracker) {
-            console.log('[Card Scanner+] Initializing Interactive Viewfinder Frame on video...');
+            console.log('[Card Scanner+] Initializing Pixel-Perfect Viewfinder on video...');
             window.cardTracker.init(activeVideo);
           }
         }
@@ -126,13 +126,13 @@
     if (e.key && e.key.toLowerCase() === hotkeyChar.toLowerCase()) {
       e.preventDefault();
       console.log(`[Card Scanner+] Hotkey '${e.key}' triggered capture.`);
-      performAICapture();
+      performAICapture(false);
     }
   }, true);
 
   if (window.cardScannerOverlay) {
     window.cardScannerOverlay.onCaptureClick = () => {
-      performAICapture();
+      performAICapture(false);
     };
 
     window.cardScannerOverlay.onManualSearch = (query) => {
@@ -140,40 +140,44 @@
     };
   }
 
+  // Expose function for Auto-Scan loop
+  window.cardScannerTriggerCapture = (isAuto = false) => {
+    return performAICapture(isAuto);
+  };
+
   /**
    * Captures the exact Viewfinder Box Frame & Sends to Gemini AI Vision Backend
    */
-  async function performAICapture() {
+  async function performAICapture(isAuto = false) {
     if (isCapturing) return;
     isCapturing = true;
 
-    if (window.cardScannerOverlay) {
+    if (window.cardScannerOverlay && !isAuto) {
       window.cardScannerOverlay.setScanning(true);
     }
 
     try {
-      const video = setupStreamTracker();
+      setupStreamTracker();
       const auctionHint = getWhatnotLiveAuctionHint();
       const currentLiveBid = getCurrentWhatnotBid();
-      console.log('[Card Scanner+] Target Scan Triggered:', { auctionHint, currentLiveBid });
+      console.log('[Card Scanner+] Capture Initiated:', { isAuto, auctionHint, currentLiveBid });
 
-      // Grab exact Viewfinder Box coordinates
-      const box = window.cardTracker ? window.cardTracker.getBoxPercentages() : { x: 0.18, y: 0.15, w: 0.64, h: 0.65 };
-
-      // High-Res Screen Capture (100% CORS-Safe)
-      const imageBase64 = await grabTargetBoxImage(video, box);
+      // High-Res Screen Capture of exact Viewfinder Box
+      const imageBase64 = await grabPixelPerfectBoxImage();
 
       if (!imageBase64 && !auctionHint) {
-        throw new Error('Kein Videobild verfügbar.');
+        throw new Error('Kein Videobild im Zielbereich verfügbar.');
       }
 
-      console.log('[Card Scanner+] Sending crisp 500x700px Card Target to Gemini AI Vision Backend...');
+      console.log('[Card Scanner+] Sending clean 500x700px Card Image to Backend...');
 
       await queryAIBackend(imageBase64, auctionHint, currentLiveBid);
     } catch (err) {
       console.error('[Card Scanner+] Capture error:', err);
-      if (window.cardScannerOverlay) {
-        window.cardScannerOverlay.showCandidates([], 0);
+      if (window.cardScannerOverlay && !isAuto) {
+        window.cardScannerOverlay.showCandidates([], 0, {
+          errorMessage: err.message
+        });
       }
     } finally {
       isCapturing = false;
@@ -181,9 +185,9 @@
   }
 
   /**
-   * High-Resolution Perspective Crop of the Viewfinder Target Box
+   * High-Resolution Pixel-Perfect Viewport Coordinate Slicer
    */
-  async function grabTargetBoxImage(video, box) {
+  async function grabPixelPerfectBoxImage() {
     return new Promise((resolve) => {
       chrome.runtime.sendMessage({ action: 'CAPTURE_TAB_FRAME' }, (response) => {
         if (!response || !response.success || !response.dataUrl) {
@@ -193,17 +197,21 @@
         const img = new Image();
         img.onload = () => {
           const dpr = window.devicePixelRatio || 1;
-          let rect = video ? video.getBoundingClientRect() : { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+          
+          let boxRect = window.cardTracker ? window.cardTracker.getBoxRect() : null;
+          if (!boxRect) {
+            boxRect = { left: window.innerWidth * 0.2, top: window.innerHeight * 0.15, width: window.innerWidth * 0.6, height: window.innerHeight * 0.65 };
+          }
 
-          const vW = rect.width * dpr;
-          const vH = rect.height * dpr;
-          const vLeft = rect.left * dpr;
-          const vTop = rect.top * dpr;
+          // Exact physical pixel coordinates on captured screen
+          const sx = Math.max(0, Math.round(boxRect.left * dpr));
+          const sy = Math.max(0, Math.round(boxRect.top * dpr));
+          const sw = Math.min(img.width - sx, Math.round(boxRect.width * dpr));
+          const sh = Math.min(img.height - sy, Math.round(boxRect.height * dpr));
 
-          const cropX = Math.round(vLeft + vW * box.x);
-          const cropY = Math.round(vTop + vH * box.y);
-          const cropW = Math.round(vW * box.w);
-          const cropH = Math.round(vH * box.h);
+          if (sw <= 10 || sh <= 10) {
+            return resolve(null);
+          }
 
           const canvas = document.createElement('canvas');
           canvas.width = 500;
@@ -212,7 +220,7 @@
           ctx.imageSmoothingEnabled = true;
           ctx.imageSmoothingQuality = 'high';
 
-          ctx.drawImage(img, cropX, cropY, cropW, cropH, 0, 0, 500, 700);
+          ctx.drawImage(img, sx, sy, sw, sh, 0, 0, 500, 700);
 
           resolve(canvas.toDataURL('image/jpeg', 0.85));
         };
@@ -227,7 +235,6 @@
    */
   async function queryAIBackend(imageBase64, auctionHint, currentLiveBid) {
     try {
-      // Check latest stored API Key in case user just saved it in popup
       const stored = await chrome.storage.local.get(['geminiApiKey', 'backendUrl']);
       if (stored.geminiApiKey) geminiApiKey = stored.geminiApiKey.trim();
       if (stored.backendUrl) backendUrl = stored.backendUrl.replace(/\/+$/, '');
@@ -248,7 +255,7 @@
       });
 
       if (!res.ok) {
-        throw new Error(`Backend returned HTTP ${res.status}`);
+        throw new Error(`Backend antwortete mit HTTP ${res.status}`);
       }
 
       const data = await res.json();
@@ -256,13 +263,15 @@
 
       const firstCand = data.candidates?.[0];
       const detectedTitle = firstCand ? `${firstCand.name} (${firstCand.number || firstCand.set_name || ''})` : null;
+      const isMissingKey = data.status === 'NO_API_KEY' || (!geminiApiKey && data.candidates?.length === 0);
 
       if (window.cardScannerOverlay) {
         window.cardScannerOverlay.showCandidates(data.candidates || [], 0, {
           detectedCode: detectedTitle,
           capturedThumbnail: imageBase64,
           currentBid: currentLiveBid,
-          missingApiKey: data.gemini_missing_key || (!geminiApiKey && data.candidates?.length === 0)
+          missingApiKey: isMissingKey,
+          apiMessage: data.apiMessage || (data.candidates?.length === 0 ? 'Keine Karte im Bildausschnitt identifiziert.' : null)
         });
       }
     } catch (err) {
@@ -271,7 +280,8 @@
         window.cardScannerOverlay.showCandidates([], 0, {
           detectedCode: null,
           capturedThumbnail: imageBase64,
-          currentBid: currentLiveBid
+          currentBid: currentLiveBid,
+          errorMessage: err.message
         });
       }
     }

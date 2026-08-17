@@ -23,14 +23,16 @@ export default async function handler(req, res) {
     const result = await matchCandidates(body);
 
     const candidates = Array.isArray(result) ? result : (result.candidates || []);
-    const missingKey = result && result.gemini_missing_key ? true : false;
+    const status = result?.status || 'OK';
+    const apiMessage = result?.apiMessage || null;
 
     return res.status(200).json({
       success: true,
       query: body,
       count: candidates.length,
       candidates: candidates,
-      gemini_missing_key: missingKey
+      status: status,
+      apiMessage: apiMessage
     });
   } catch (err) {
     console.error('[API /api/search-candidates Error]:', err);
@@ -38,7 +40,8 @@ export default async function handler(req, res) {
       success: false,
       error: err.message,
       candidates: [],
-      gemini_missing_key: false
+      status: 'EXCEPTION',
+      apiMessage: err.message
     });
   }
 }
