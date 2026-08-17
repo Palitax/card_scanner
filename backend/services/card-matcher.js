@@ -1,14 +1,16 @@
 /**
  * Card Matcher Service for Card Scanner+
- * Translates OCR-extracted set numbers and codes into verified Cardmarket candidate cards
+ * Precision Card Matching across Supabase price_history & card_images
  */
 
 import { searchPriceHistory, searchCardImages, fetchCardImages, parseCardDetailsFromId } from './supabase.js';
 import { memoryCache } from './cache.js';
 
 export async function matchCandidates(params = {}) {
-  const { number, total, promoCode, setCode, code, rawText, auctionHint, query } = params;
-  const searchKey = `${number || ''}_${total || ''}_${promoCode || ''}_${setCode || ''}_${code || ''}_${rawText || ''}_${auctionHint || ''}_${query || ''}`.trim();
+  const { number, total, promoCode, setCode, code, artist, hp, auctionHint, query } = params;
+  const searchKey = `${number || ''}_${total || ''}_${promoCode || ''}_${setCode || ''}_${code || ''}_${artist || ''}_${hp || ''}_${auctionHint || ''}_${query || ''}`.trim();
+
+  if (!searchKey) return [];
 
   // 1. Check L1 Memory Cache
   const cached = memoryCache.get(searchKey);
@@ -17,15 +19,15 @@ export async function matchCandidates(params = {}) {
     return cached;
   }
 
-  // 2. Build Multi-Tiered Search Terms
+  // 2. Build Precise Search Terms
   const searchTerms = [];
 
-  // If Whatnot DOM had an auction hint (e.g. "Schiggy (sv2a 170)")
+  // Auction Hint from Whatnot DOM (e.g. "Schiggy (sv2a 170)" or "Marill #11")
   if (auctionHint) {
     const hintMatch = auctionHint.match(/([a-zA-Z\u00C0-\u017F\s]+)\s*\(([^)]+)\)/);
     if (hintMatch) {
-      searchTerms.push(hintMatch[1].trim()); // e.g. Schiggy
-      searchTerms.push(hintMatch[2].trim()); // e.g. sv2a 170
+      searchTerms.push(hintMatch[1].trim());
+      searchTerms.push(hintMatch[2].trim());
       searchTerms.push(hintMatch[2].replace(/\s+/g, '-').trim());
     } else {
       searchTerms.push(auctionHint.trim());
@@ -55,35 +57,23 @@ export async function matchCandidates(params = {}) {
     searchTerms.push(`${number}%${total}`);
   }
 
-  if (code) {
+  if (code && !searchTerms.includes(code)) {
     searchTerms.push(code);
     searchTerms.push(code.replace('/', '-'));
   }
 
-  if (number) {
+  if (number && !searchTerms.includes(number)) {
     searchTerms.push(number);
     if (number.length === 3 && number.startsWith('0')) {
-      searchTerms.push(number.replace(/^0+/, '')); // e.g. 073 -> 73
+      searchTerms.push(number.replace(/^0+/, ''));
     }
   }
 
-  // Extract standalone 3-digit numbers from raw text
-  if (rawText) {
-    const numMatches = rawText.match(/\b\d{2,3}\b/g);
-    if (numMatches) {
-      for (const m of numMatches) {
-        if (!searchTerms.includes(m)) searchTerms.push(m);
-      }
-    }
-    const wordMatches = rawText.match(/\b[A-Za-z]{3,}\b/g);
-    if (wordMatches) {
-      for (const w of wordMatches) {
-        if (w.length >= 4 && !searchTerms.includes(w)) searchTerms.push(w);
-      }
-    }
+  if (artist) {
+    searchTerms.push(artist);
   }
 
-  console.log('[Card Matcher] Searching Supabase with terms:', searchTerms);
+  console.log('[Card Matcher] Searching Supabase with clean terms:', searchTerms);
 
   // 3. Search Price History & Images
   const [priceRows, imageRows] = await Promise.all([
@@ -93,7 +83,7 @@ export async function matchCandidates(params = {}) {
 
   const candidateMap = new Map();
 
-  // Process Price History Rows (Highest priority because they have verified market prices)
+  // Process Price History Rows (With Verified Market Prices)
   if (priceRows && priceRows.length > 0) {
     const cardIds = priceRows.map(r => r.card_id).filter(Boolean);
     const imageMap = await fetchCardImages(cardIds);
@@ -128,7 +118,7 @@ export async function matchCandidates(params = {}) {
     }
   }
 
-  // Process Additional Image Rows (if not already found in price history)
+  // Process Additional Image Rows
   if (candidateMap.size < 5 && imageRows && imageRows.length > 0) {
     for (const imgRow of imageRows) {
       if (candidateMap.has(imgRow.card_id)) continue;

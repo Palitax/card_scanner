@@ -205,46 +205,47 @@ class CardScannerOverlay {
       `;
     } else {
       // Empty / Fallback State
-      const detectedText = lastScanMeta && lastScanMeta.rawText ? lastScanMeta.rawText : null;
       const detectedCode = lastScanMeta && lastScanMeta.detectedCode ? lastScanMeta.detectedCode : null;
       const thumb = lastScanMeta && lastScanMeta.capturedThumbnail ? lastScanMeta.capturedThumbnail : null;
 
-      const cmSearchUrl = detectedCode || detectedText
-        ? `https://www.cardmarket.com/de/Pokemon/Products/Search?searchString=${encodeURIComponent(detectedCode || detectedText)}`
+      const cmSearchUrl = detectedCode
+        ? `https://www.cardmarket.com/de/Pokemon/Products/Search?searchString=${encodeURIComponent(detectedCode)}`
         : 'https://www.cardmarket.com/de/Pokemon';
 
       bodyContent = `
         <div style="text-align: center; padding: 14px 6px; color: #94a3b8;">
           ${thumb ? `
             <div style="margin-bottom: 10px;">
-              <span style="font-size: 11px; color: #818cf8; display: block; margin-bottom: 4px;">Gescannter Stream-Bereich:</span>
-              <img src="${thumb}" style="max-width: 100%; max-height: 100px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); object-fit: contain; background: #000;" />
+              <span style="font-size: 11px; color: #818cf8; display: block; margin-bottom: 4px;">Gescannter Kartenausschnitt:</span>
+              <img src="${thumb}" style="max-width: 100%; max-height: 110px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); object-fit: contain; background: #000;" />
             </div>
           ` : `
             <div style="font-size: 28px; margin-bottom: 6px;">📷</div>
           `}
           
           <h3 style="color: #f8fafc; font-size: 13px; margin-bottom: 4px;">
-            ${detectedCode ? `Erkannt: "${detectedCode}"` : 'Bereit zum Scannen'}
+            ${detectedCode ? `Erkannte Nummer: "${detectedCode}"` : 'Keine Kartennummer erkannt'}
           </h3>
           
           <p style="font-size: 12px; line-height: 1.4; margin-bottom: 12px; color: #94a3b8;">
-            ${detectedCode ? 'Keine exakte Karte in der DB gefunden.' : 'Halte eine Karte vor die Kamera und drücke <b style="color:#818cf8;">S</b>.'}
+            ${detectedCode ? 'Nummer nicht in der Datenbank gefunden.' : 'Halte die Kartennummer (z. B. 025/165) mittig vor die Kamera und drücke <b style="color:#818cf8;">S</b>.'}
           </p>
           
           <a href="${cmSearchUrl}" target="_blank" class="cs-btn-cardmarket" style="max-width:240px; margin: 0 auto;">
-            🔍 Direkt auf Cardmarket suchen ↗
+            🔍 ${detectedCode ? `"${detectedCode}" auf Cardmarket suchen ↗` : 'Auf Cardmarket suchen ↗'}
           </a>
         </div>
       `;
     }
+
+    const prefillValue = (lastScanMeta && lastScanMeta.detectedCode) ? lastScanMeta.detectedCode : '';
 
     this.container.innerHTML = `
       <!-- Header -->
       <div class="cs-header">
         <div class="cs-search-row">
           <div class="cs-search-box">
-            <input type="text" class="cs-search-input" id="cs-search-input" placeholder="Karten oder Nummern suchen..." />
+            <input type="text" class="cs-search-input" id="cs-search-input" placeholder="Karten oder Nummern suchen..." value="${prefillValue}" />
             <span class="cs-search-icon">🔍</span>
           </div>
           <button class="cs-btn-icon" id="cs-btn-collapse" title="Minimieren">✕</button>

@@ -1,6 +1,6 @@
 /**
  * Card Scanner+ OCR Engine
- * Uses pre-warmed local Tesseract.js (Offline WASM) with specialized Pokémon Regex & Typo Correction
+ * Strict Pokémon Card Number, Set Code & Identifier Extractor
  */
 
 class CardScannerOCREngine {
@@ -11,9 +11,6 @@ class CardScannerOCREngine {
     this.initPromise = null;
   }
 
-  /**
-   * Pre-warms the Tesseract WASM worker in background
-   */
   async init() {
     if (this.ready) return true;
     if (this.initPromise) return this.initPromise;
@@ -37,9 +34,10 @@ class CardScannerOCREngine {
           gzip: true
         });
 
+        // Strict whitelist: digits, slashes, uppercase letters, hyphen, dot
         await this.worker.setParameters({
-          tessedit_char_whitelist: '0123456789/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz- #.',
-          tessedit_pageseg_mode: '11' // Sparse text with OSD (better for card layout)
+          tessedit_char_whitelist: '0123456789/ABCDEFGHIJKLMNOPQRSTUVWXYZ- .#',
+          tessedit_pageseg_mode: '7' // Treat image as a single text line (ideal for corners & numbers)
         });
 
         this.ready = true;
@@ -60,7 +58,7 @@ class CardScannerOCREngine {
   }
 
   /**
-   * Performs OCR recognition on a canvas or image source
+   * Performs OCR recognition on a focused corner canvas
    */
   async recognize(imageSource) {
     if (!this.ready) {
@@ -77,10 +75,15 @@ class CardScannerOCREngine {
     
     const rawText = (result && result.data && result.data.text) ? result.data.text : '';
     const confidence = (result && result.data && result.data.confidence) ? result.data.confidence : 0;
-    
-    console.log(`[Card Scanner+ OCR] Scanned in ${duration}ms (Confidence: ${confidence}%). Raw Text: "${rawText.trim().replace(/\n+/g, ' ')}"`);
 
     const parsed = this.parseText(rawText);
+    
+    if (parsed) {
+      console.log(`[Card Scanner+ OCR] ✓ Matched ${parsed.type} (${duration}ms, ${confidence}%): "${parsed.code}" from raw: "${rawText.trim()}"`);
+    } else {
+      console.log(`[Card Scanner+ OCR] ✗ No card pattern in raw: "${rawText.trim().replace(/\n+/g, ' ')}" (${duration}ms)`);
+    }
+
     return {
       rawText: rawText.trim(),
       parsed: parsed,
@@ -90,30 +93,46 @@ class CardScannerOCREngine {
   }
 
   /**
-   * Normalizes OCR text and applies Regex for Pokémon card numbering
+   * Strictly parses only valid card numbers and set identifiers
+   * Returns NULL if no genuine card code is found (NEVER returns garbage text)
    */
   parseText(text) {
     if (!text || typeof text !== 'string') return null;
 
-    let normalized = text.toUpperCase();
+    let normalized = text.toUpperCase().trim();
     
-    // Normalize slashes: replace 'I', '|', '\', 'l' between numbers with '/'
+    // Normalize OCR misinterpretations
     normalized = normalized.replace(/(\d+)\s*[I|\\l]\s*(\d+)/g, '$1/$2');
     normalized = normalized.replace(/(\b\w+)\s*[I|\\l]\s*(\d{2,3}\b)/g, '$1/$2');
-    
-    // Normalize 'O' or 'D' as '0' when directly part of number sequences
     normalized = normalized.replace(/\bO(\d+)/g, '0$1');
     normalized = normalized.replace(/(\d+)O\b/g, '$10');
     normalized = normalized.replace(/(\d+)\s*[\/]\s*O(\d+)/g, '$1/0$2');
     normalized = normalized.replace(/O(\d+)\s*[\/]\s*(\d+)/g, '0$1/$2');
-    normalized = normalized.replace(/(\d+)B(\d+)/g, '$18$2');
 
-    // 1. Japanese / Modern Set Code + Number: e.g. sv4K 073/066, sv2a 170/165, sv3 114, s9a 073, s12a 210
-    const jpSetMatch = normalized.match(/\b(SV\d+[A-Z]?|S\d+[A-Z]?|SM\d+[A-Z]?|XY\d+[A-Z]?|CSM\d+[A-Z]?|MEW|OBF|PAR|TEF|TWM|SCR|SSP|PRE)\s*[-]?\s*(\d{1,3})\s*(?:[\/\\]\s*(\d{1,3}))?\b/i);
-    if (jpSetMatch) {
-      const setCode = jpSetMatch[1].toUpperCase();
-      const num = jpSetMatch[2].padStart(3, '0');
-      const total = jpSetMatch[3] ? jpSetMatch[3].padStart(3, '0') : null;
+    // 1. Standard / Secret Card Number: e.g. 025/165, 216/091, 073/066, 4/102, 11/18
+    const standardMatch = normalized.match(/\b(\d{1,3})\s*[\/\\]\s*(\d{1,3})\b/);
+    if (standardMatch) {
+      const num = standardMatch[1];
+      const total = standardMatch[2];
+      // Sanity check: valid set totals are usually 10-350
+      const totalNum = parseInt(total, 10);
+      if (totalNum >= 10 && totalNum <= 400) {
+        return {
+          type: 'standard',
+          code: `${num}/${total}`,
+          number: num,
+          total: total,
+          confidence: 98
+        };
+      }
+    }
+
+    // 2. Japanese & Modern Set Code + Number: e.g. sv4K 073, sv2a 170, sv3 114, s9a 073, s12a 210, MEW 181
+    const setCodeMatch = normalized.match(/\b(SV\d+[A-Z]?|S\d+[A-Z]?|SM\d+[A-Z]?|XY\d+[A-Z]?|CSM\d+[A-Z]?|MEW|OBF|PAR|TEF|TWM|SCR|SSP|PRE)\s*[-]?\s*(\d{1,3})\s*(?:[\/\\]\s*(\d{1,3}))?\b/i);
+    if (setCodeMatch) {
+      const setCode = setCodeMatch[1].toUpperCase();
+      const num = setCodeMatch[2].padStart(3, '0');
+      const total = setCodeMatch[3] ? setCodeMatch[3].padStart(3, '0') : null;
       return {
         type: 'set_code',
         code: total ? `${setCode} ${num}/${total}` : `${setCode} ${num}`,
@@ -125,7 +144,7 @@ class CardScannerOCREngine {
       };
     }
 
-    // 2. One Piece Card Game Code: OP07-073, EB01-012, ST01-001
+    // 3. One Piece Card Number: OP07-073, EB01-012, ST01-001, PRB01-001
     const opMatch = normalized.match(/\b(OP\d{2}|EB\d{2}|ST\d{2}|PRB\d{2}|P)\s*[-]?\s*(\d{3})\b/i);
     if (opMatch) {
       const prefix = opMatch[1].toUpperCase();
@@ -139,7 +158,7 @@ class CardScannerOCREngine {
       };
     }
 
-    // 3. Trainer Gallery / Galarian Gallery: TG01/TG30, GG15/GG70
+    // 4. Trainer / Galarian Gallery: TG01/TG30, GG15/GG70, TG04
     const galleryMatch = normalized.match(/\b(TG|GG)\s*[-]?\s*(\d{1,2})\s*(?:[\/\\]\s*(TG|GG)?\s*(\d{1,2}))?\b/i);
     if (galleryMatch) {
       const prefix = galleryMatch[1].toUpperCase();
@@ -155,7 +174,7 @@ class CardScannerOCREngine {
       };
     }
 
-    // 4. Promos: SVP 001, SWSH 123, SM 45, PR-01
+    // 5. Promos: SVP 001, SWSH 123, SM 45, PR-01
     const promoMatch = normalized.match(/\b(SVP|SWSH|SM|XY|BW|PR)\s*[-]?\s*(\d{1,3})\b/i);
     if (promoMatch) {
       const prefix = promoMatch[1].toUpperCase();
@@ -170,37 +189,47 @@ class CardScannerOCREngine {
       };
     }
 
-    // 5. Standard Set Numbering: e.g. 073/066, 025/165, 216/091, 151/165
-    const standardMatch = normalized.match(/\b(\d{1,3})\s*[\/\\]\s*(\d{1,3})\b/);
-    if (standardMatch) {
-      const rawNum = standardMatch[1];
-      const rawTotal = standardMatch[2];
-      const paddedNum = rawTotal.length >= 3 ? rawNum.padStart(3, '0') : rawNum;
-      const paddedTotal = rawTotal;
+    // 6. Vintage Level & HP (for Japanese Vintage cards without set numbers): e.g. "LV.10 HP40"
+    const hpLvMatch = normalized.match(/(?:LV\.?\s*(\d{1,2}))?\s*(?:HP\s*(\d{2,3}))/i) || normalized.match(/(?:HP\s*(\d{2,3}))\s*(?:LV\.?\s*(\d{1,2}))?/i);
+    if (hpLvMatch && (hpLvMatch[1] || hpLvMatch[2])) {
+      const hp = hpLvMatch[1] && hpLvMatch[1].length >= 2 ? hpLvMatch[1] : hpLvMatch[2];
+      const lv = hpLvMatch[1] && hpLvMatch[1].length < 2 ? hpLvMatch[1] : (hpLvMatch[2] && hpLvMatch[2].length < 2 ? hpLvMatch[2] : null);
+      if (hp) {
+        return {
+          type: 'vintage_stats',
+          code: lv ? `LV.${lv} HP${hp}` : `HP${hp}`,
+          hp: hp,
+          lv: lv,
+          confidence: 85
+        };
+      }
+    }
 
+    // 7. Known Illustrator (Japanese Vintage cards bottom text): e.g. "Illus. Naoyo Kimura"
+    const illusMatch = normalized.match(/(?:ILLUS\.?|ILLUSTRATOR)\s*([A-Z\s]{4,25})/i) || normalized.match(/\b(NAOYO KIMURA|KEN SUGIMORI|MITSUHIRO ARITA|KOUKI SAITOU|TOMOKAZU KOMIYA|HIMENO|KAGEYAMA)\b/i);
+    if (illusMatch) {
+      const artist = (illusMatch[1] || illusMatch[0]).trim();
       return {
-        type: 'standard',
-        code: `${paddedNum}/${paddedTotal}`,
-        number: paddedNum,
-        total: paddedTotal,
-        promoCode: null,
-        confidence: 95
+        type: 'illustrator',
+        code: `Illus. ${artist}`,
+        artist: artist,
+        confidence: 80
       };
     }
 
-    // 6. Standalone 3-digit card number (e.g. 073 or 170 or 183)
-    const threeDigitMatch = normalized.match(/\b(\d{3})\b/);
-    if (threeDigitMatch) {
+    // 8. Strict Standalone 3-digit card number in bottom corner (e.g. 073, 170, 183)
+    const threeDigit = normalized.match(/\b(\d{3})\b/);
+    if (threeDigit && normalized.length <= 8) {
       return {
         type: 'number_only',
-        code: threeDigitMatch[1],
-        number: threeDigitMatch[1],
+        code: threeDigit[1],
+        number: threeDigit[1],
         total: null,
-        promoCode: null,
-        confidence: 70
+        confidence: 75
       };
     }
 
+    // Explicitly return NULL - no valid card pattern found
     return null;
   }
 

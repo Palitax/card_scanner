@@ -1,10 +1,10 @@
 /**
  * Card Scanner+ Content Script (Master Orchestrator)
- * Multi-Region Frame Grabber, Whatnot Context Scraper & API Client
+ * Precision Corner ROI Grabber & Whatnot Live Context Scraper
  */
 
 (function () {
-  console.log('[Card Scanner+] Content Script initialized on Whatnot.');
+  console.log('[Card Scanner+] Content Script loaded.');
 
   let backendUrl = 'http://localhost:3001';
   let hotkeyChar = 's';
@@ -58,7 +58,6 @@
         }
       }
 
-      // Check for prominent bottom banner text
       const allDivs = document.querySelectorAll('div');
       for (const div of allDivs) {
         if (div.innerText && (div.innerText.includes('(sv') || div.innerText.includes('151') || div.innerText.includes('GX') || div.innerText.includes('ex'))) {
@@ -102,7 +101,7 @@
   }
 
   /**
-   * Performs Intelligent Multi-Region Capture & OCR
+   * Focused Multi-Corner Capture & Number Recognition
    */
   async function performCapture() {
     if (isCapturing) return;
@@ -115,59 +114,60 @@
     try {
       const video = findWhatnotVideoStream();
       const auctionHint = getWhatnotLiveAuctionHint();
-      console.log('[Card Scanner+] Whatnot Live Auction DOM Hint:', auctionHint);
+      console.log('[Card Scanner+] Whatnot Auction Context:', auctionHint);
 
-      let primaryCanvas = null;
-      let bottomCardCanvas = null;
+      let cornerCrops = null;
 
-      // Pipeline A: Direct DOM Canvas Multi-Crop
+      // Pipeline A: Direct DOM Canvas Crop
       if (video) {
         try {
-          const crops = grabMultiRegionCrops(video);
-          primaryCanvas = crops.cardAreaCanvas;
-          bottomCardCanvas = crops.cardBottomCanvas;
+          cornerCrops = grabTargetedCornerCrops(video);
         } catch (err) {
-          console.warn('[Card Scanner+] Direct grab tainted (CORS/MSE). Trying Pipeline B...', err);
+          console.warn('[Card Scanner+] Direct grab failed. Trying Pipeline B...', err);
         }
       }
 
       // Pipeline B Fallback: Background Screen Capture
-      if (!primaryCanvas) {
-        console.log('[Card Scanner+] Executing Pipeline B: Service Worker Screen Capture...');
-        const crops = await grabMultiRegionFallback(video);
-        if (crops) {
-          primaryCanvas = crops.cardAreaCanvas;
-          bottomCardCanvas = crops.cardBottomCanvas;
-        }
+      if (!cornerCrops) {
+        cornerCrops = await grabTargetedCornerCropsFallback(video);
       }
 
-      if (!primaryCanvas && !auctionHint) {
+      if (!cornerCrops && !auctionHint) {
         throw new Error('Kein Videobild verfügbar.');
       }
 
-      // Run OCR on the Bottom Region first (most accurate for set codes & numbers)
-      let ocrResult = null;
-      if (bottomCardCanvas) {
-        ocrResult = await window.cardScannerOCR.recognize(bottomCardCanvas);
-      }
+      let detectedResult = null;
 
-      // If bottom region gave no clear code, run on the wider Card Area Canvas
-      if ((!ocrResult || !ocrResult.parsed) && primaryCanvas) {
-        console.log('[Card Scanner+] Scanning full card area...');
-        const fullCardResult = await window.cardScannerOCR.recognize(primaryCanvas);
-        if (fullCardResult && (fullCardResult.parsed || fullCardResult.rawText.length > (ocrResult ? ocrResult.rawText.length : 0))) {
-          ocrResult = fullCardResult;
+      // 1. Scan Bottom-Left Corner (Modern Set Codes & Numbers: 025/165, sv4k 073, 216/091)
+      if (cornerCrops && cornerCrops.bottomLeft) {
+        const resBL = await window.cardScannerOCR.recognize(cornerCrops.bottomLeft);
+        if (resBL && resBL.parsed) {
+          detectedResult = resBL.parsed;
         }
       }
 
-      const parsed = ocrResult ? ocrResult.parsed : null;
-      const rawText = ocrResult ? ocrResult.rawText : '';
-      const capturedThumbnail = primaryCanvas ? primaryCanvas.toDataURL('image/jpeg', 0.8) : null;
+      // 2. Scan Bottom-Right Corner (Vintage Numbers & Illustrators: 4/102, 11/18, OP07-073)
+      if (!detectedResult && cornerCrops && cornerCrops.bottomRight) {
+        const resBR = await window.cardScannerOCR.recognize(cornerCrops.bottomRight);
+        if (resBR && resBR.parsed) {
+          detectedResult = resBR.parsed;
+        }
+      }
 
-      console.log('[Card Scanner+] Final OCR Result:', { parsed, rawText, auctionHint });
+      // 3. Scan Top-Right Header (Vintage HP / LV: HP40, LV.10)
+      if (!detectedResult && cornerCrops && cornerCrops.topHeader) {
+        const resTop = await window.cardScannerOCR.recognize(cornerCrops.topHeader);
+        if (resTop && resTop.parsed) {
+          detectedResult = resTop.parsed;
+        }
+      }
+
+      const capturedThumb = cornerCrops && cornerCrops.fullCard ? cornerCrops.fullCard.toDataURL('image/jpeg', 0.8) : null;
+
+      console.log('[Card Scanner+] Final Detection Result:', { detectedResult, auctionHint });
 
       // Query Backend
-      await queryBackendCandidates(parsed, rawText, auctionHint, capturedThumbnail);
+      await queryBackendCandidates(detectedResult, auctionHint, capturedThumb);
     } catch (err) {
       console.error('[Card Scanner+] Capture error:', err);
       if (window.cardScannerOverlay) {
@@ -179,48 +179,50 @@
   }
 
   /**
-   * Multi-Region Cropper from DOM Video
+   * Cuts precise high-contrast corner zones from the video
    */
-  function grabMultiRegionCrops(video) {
-    const vWidth = video.videoWidth || video.clientWidth || 720;
-    const vHeight = video.videoHeight || video.clientHeight || 1280;
+  function grabTargetedCornerCrops(video) {
+    const vW = video.videoWidth || video.clientWidth || 720;
+    const vH = video.videoHeight || video.clientHeight || 1280;
 
-    // 1. Central Card Area: Y 20% -> 80%, X 15% -> 85% (where cards are held)
-    const cardX = Math.floor(vWidth * 0.15);
-    const cardY = Math.floor(vHeight * 0.20);
-    const cardW = Math.floor(vWidth * 0.70);
-    const cardH = Math.floor(vHeight * 0.60);
+    // Full Card Area Thumbnail
+    const fullCard = document.createElement('canvas');
+    fullCard.width = Math.floor(vW * 0.70);
+    fullCard.height = Math.floor(vH * 0.65);
+    const ctxFull = fullCard.getContext('2d', { willReadFrequently: true });
+    ctxFull.drawImage(video, Math.floor(vW * 0.15), Math.floor(vH * 0.18), fullCard.width, fullCard.height, 0, 0, fullCard.width, fullCard.height);
 
-    const cardAreaCanvas = document.createElement('canvas');
-    cardAreaCanvas.width = cardW;
-    cardAreaCanvas.height = cardH;
-    const ctx1 = cardAreaCanvas.getContext('2d', { willReadFrequently: true });
-    ctx1.drawImage(video, cardX, cardY, cardW, cardH, 0, 0, cardW, cardH);
+    // Zone 1: Bottom-Left Corner (Modern Numbers)
+    const bLeft = document.createElement('canvas');
+    bLeft.width = Math.floor(vW * 0.38);
+    bLeft.height = Math.floor(vH * 0.14);
+    const ctxBL = bLeft.getContext('2d', { willReadFrequently: true });
+    ctxBL.drawImage(video, Math.floor(vW * 0.15), Math.floor(vH * 0.66), bLeft.width, bLeft.height, 0, 0, bLeft.width, bLeft.height);
+    preprocessCropCanvas(ctxBL, bLeft.width, bLeft.height);
 
-    // 2. Card Bottom Zone: Lower portion of the central area (Y 45% -> 78%)
-    const botX = Math.floor(vWidth * 0.15);
-    const botY = Math.floor(vHeight * 0.45);
-    const botW = Math.floor(vWidth * 0.70);
-    const botH = Math.floor(vHeight * 0.33);
+    // Zone 2: Bottom-Right Corner (Vintage & One Piece Numbers)
+    const bRight = document.createElement('canvas');
+    bRight.width = Math.floor(vW * 0.38);
+    bRight.height = Math.floor(vH * 0.14);
+    const ctxBR = bRight.getContext('2d', { willReadFrequently: true });
+    ctxBR.drawImage(video, Math.floor(vW * 0.47), Math.floor(vH * 0.66), bRight.width, bRight.height, 0, 0, bRight.width, bRight.height);
+    preprocessCropCanvas(ctxBR, bRight.width, bRight.height);
 
-    const cardBottomCanvas = document.createElement('canvas');
-    cardBottomCanvas.width = botW;
-    cardBottomCanvas.height = botH;
-    const ctx2 = cardBottomCanvas.getContext('2d', { willReadFrequently: true });
-    ctx2.drawImage(video, botX, botY, botW, botH, 0, 0, botW, botH);
+    // Zone 3: Top-Right Header (HP & Level)
+    const topHeader = document.createElement('canvas');
+    topHeader.width = Math.floor(vW * 0.38);
+    topHeader.height = Math.floor(vH * 0.12);
+    const ctxTop = topHeader.getContext('2d', { willReadFrequently: true });
+    ctxTop.drawImage(video, Math.floor(vW * 0.47), Math.floor(vH * 0.18), topHeader.width, topHeader.height, 0, 0, topHeader.width, topHeader.height);
+    preprocessCropCanvas(ctxTop, topHeader.width, topHeader.height);
 
-    // Binarize Bottom Region for clean character edges
-    const imgData2 = ctx2.getImageData(0, 0, botW, botH);
-    binarizeImageData(imgData2);
-    ctx2.putImageData(imgData2, 0, 0);
-
-    return { cardAreaCanvas, cardBottomCanvas };
+    return { fullCard, bottomLeft: bLeft, bottomRight: bRight, topHeader };
   }
 
   /**
-   * Multi-Region Screen Capture Fallback
+   * Screen Capture Fallback
    */
-  async function grabMultiRegionFallback(video) {
+  async function grabTargetedCornerCropsFallback(video) {
     return new Promise((resolve) => {
       chrome.runtime.sendMessage({ action: 'CAPTURE_TAB_FRAME' }, (response) => {
         if (!response || !response.success || !response.dataUrl) {
@@ -232,35 +234,39 @@
           const dpr = window.devicePixelRatio || 1;
           let rect = video ? video.getBoundingClientRect() : { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
 
-          const cardX = Math.round((rect.left + rect.width * 0.15) * dpr);
-          const cardY = Math.round((rect.top + rect.height * 0.20) * dpr);
-          const cardW = Math.round(rect.width * 0.70 * dpr);
-          const cardH = Math.round(rect.height * 0.60 * dpr);
+          const vW = rect.width * dpr;
+          const vH = rect.height * dpr;
+          const vLeft = rect.left * dpr;
+          const vTop = rect.top * dpr;
 
-          const cardAreaCanvas = document.createElement('canvas');
-          cardAreaCanvas.width = cardW;
-          cardAreaCanvas.height = cardH;
-          const ctx1 = cardAreaCanvas.getContext('2d', { willReadFrequently: true });
-          ctx1.drawImage(img, cardX, cardY, cardW, cardH, 0, 0, cardW, cardH);
+          const fullCard = document.createElement('canvas');
+          fullCard.width = Math.floor(vW * 0.70);
+          fullCard.height = Math.floor(vH * 0.65);
+          const ctxFull = fullCard.getContext('2d', { willReadFrequently: true });
+          ctxFull.drawImage(img, Math.floor(vLeft + vW * 0.15), Math.floor(vTop + vH * 0.18), fullCard.width, fullCard.height, 0, 0, fullCard.width, fullCard.height);
 
-          const botX = Math.round((rect.left + rect.width * 0.15) * dpr);
-          const botY = Math.round((rect.top + rect.height * 0.45) * dpr);
-          const botW = Math.round(rect.width * 0.70 * dpr);
-          const botH = Math.round(rect.height * 0.33 * dpr);
+          const bLeft = document.createElement('canvas');
+          bLeft.width = Math.floor(vW * 0.38);
+          bLeft.height = Math.floor(vH * 0.14);
+          const ctxBL = bLeft.getContext('2d', { willReadFrequently: true });
+          ctxBL.drawImage(img, Math.floor(vLeft + vW * 0.15), Math.floor(vTop + vH * 0.66), bLeft.width, bLeft.height, 0, 0, bLeft.width, bLeft.height);
+          preprocessCropCanvas(ctxBL, bLeft.width, bLeft.height);
 
-          const cardBottomCanvas = document.createElement('canvas');
-          cardBottomCanvas.width = botW;
-          cardBottomCanvas.height = botH;
-          const ctx2 = cardBottomCanvas.getContext('2d', { willReadFrequently: true });
-          ctx2.drawImage(img, botX, botY, botW, botH, 0, 0, botW, botH);
+          const bRight = document.createElement('canvas');
+          bRight.width = Math.floor(vW * 0.38);
+          bRight.height = Math.floor(vH * 0.14);
+          const ctxBR = bRight.getContext('2d', { willReadFrequently: true });
+          ctxBR.drawImage(img, Math.floor(vLeft + vW * 0.47), Math.floor(vTop + vH * 0.66), bRight.width, bRight.height, 0, 0, bRight.width, bRight.height);
+          preprocessCropCanvas(ctxBR, bRight.width, bRight.height);
 
-          try {
-            const imgData2 = ctx2.getImageData(0, 0, botW, botH);
-            binarizeImageData(imgData2);
-            ctx2.putImageData(imgData2, 0, 0);
-          } catch (e) {}
+          const topHeader = document.createElement('canvas');
+          topHeader.width = Math.floor(vW * 0.38);
+          topHeader.height = Math.floor(vH * 0.12);
+          const ctxTop = topHeader.getContext('2d', { willReadFrequently: true });
+          ctxTop.drawImage(img, Math.floor(vLeft + vW * 0.47), Math.floor(vTop + vH * 0.18), topHeader.width, topHeader.height, 0, 0, topHeader.width, topHeader.height);
+          preprocessCropCanvas(ctxTop, topHeader.width, topHeader.height);
 
-          resolve({ cardAreaCanvas, cardBottomCanvas });
+          resolve({ fullCard, bottomLeft: bLeft, bottomRight: bRight, topHeader });
         };
         img.onerror = () => resolve(null);
         img.src = response.dataUrl;
@@ -269,32 +275,36 @@
   }
 
   /**
-   * Grayscale & Contrast Enhancement
+   * Preprocessing: Grayscale & Adaptive Contrast Stretching
    */
-  function binarizeImageData(imgData) {
-    const d = imgData.data;
-    const len = d.length;
-    for (let i = 0; i < len; i += 4) {
-      const gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-      d[i] = gray;
-      d[i + 1] = gray;
-      d[i + 2] = gray;
-    }
+  function preprocessCropCanvas(ctx, w, h) {
+    try {
+      const imgData = ctx.getImageData(0, 0, w, h);
+      const d = imgData.data;
+      for (let i = 0; i < d.length; i += 4) {
+        const gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+        d[i] = gray;
+        d[i + 1] = gray;
+        d[i + 2] = gray;
+      }
+      ctx.putImageData(imgData, 0, 0);
+    } catch (e) {}
   }
 
   /**
-   * Queries Backend API for Real Matches
+   * Queries Backend API with Clean Card Codes
    */
-  async function queryBackendCandidates(parsed, rawText, auctionHint, capturedThumbnail) {
+  async function queryBackendCandidates(detected, auctionHint, capturedThumbnail) {
     try {
       const endpoint = `${backendUrl}/api/search-candidates`;
       const payload = {
-        number: parsed ? parsed.number : '',
-        total: parsed ? parsed.total : '',
-        promoCode: parsed ? parsed.promoCode : '',
-        setCode: parsed ? parsed.setCode : '',
-        code: parsed ? parsed.code : '',
-        rawText: rawText || '',
+        number: detected ? detected.number : '',
+        total: detected ? detected.total : '',
+        promoCode: detected ? detected.promoCode : '',
+        setCode: detected ? detected.setCode : '',
+        code: detected ? detected.code : '',
+        artist: detected ? detected.artist : '',
+        hp: detected ? detected.hp : '',
         auctionHint: auctionHint || ''
       };
 
@@ -314,8 +324,7 @@
 
       if (window.cardScannerOverlay) {
         window.cardScannerOverlay.showCandidates(data.candidates || [], 0, {
-          rawText: rawText,
-          detectedCode: parsed ? parsed.code : (rawText || auctionHint),
+          detectedCode: detected ? detected.code : null,
           capturedThumbnail: capturedThumbnail
         });
       }
@@ -323,8 +332,7 @@
       console.error('[Card Scanner+] Backend API request failed:', err);
       if (window.cardScannerOverlay) {
         window.cardScannerOverlay.showCandidates([], 0, {
-          rawText: rawText,
-          detectedCode: parsed ? parsed.code : rawText,
+          detectedCode: detected ? detected.code : null,
           capturedThumbnail: capturedThumbnail
         });
       }
@@ -343,7 +351,7 @@
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: query, rawText: query })
+        body: JSON.stringify({ query: query })
       });
 
       if (res.ok) {
