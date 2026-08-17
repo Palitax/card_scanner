@@ -1,66 +1,89 @@
 /**
- * Card Scanner+ Popup Script
+ * Popup Script for Card Scanner+
+ * Settings management and backend connectivity check
  */
 
-document.addEventListener('DOMContentLoaded', async () => {
-  const inpBackendUrl = document.getElementById('backendUrl');
-  const selHotkey = document.getElementById('hotkey');
-  const selCurrency = document.getElementById('currency');
+document.addEventListener('DOMContentLoaded', () => {
+  const backendUrlInput = document.getElementById('backendUrl');
+  const geminiApiKeyInput = document.getElementById('geminiApiKey');
+  const hotkeySelect = document.getElementById('hotkey');
+  const currencySelect = document.getElementById('currency');
   const btnSave = document.getElementById('btnSave');
   const btnTest = document.getElementById('btnTest');
+  const statusBox = document.getElementById('statusBox');
   const statusDot = document.getElementById('statusDot');
   const statusText = document.getElementById('statusText');
 
-  // Load existing config
-  chrome.runtime.sendMessage({ action: 'GET_CONFIG' }, (res) => {
-    if (res && res.success && res.config) {
-      inpBackendUrl.value = res.config.backendUrl || 'http://localhost:3001';
-      selHotkey.value = res.config.hotkey || 's';
-      selCurrency.value = res.config.currency || 'EUR';
-    }
+  // 1. Load saved settings from chrome.storage.local
+  chrome.storage.local.get(['backendUrl', 'geminiApiKey', 'hotkey', 'currency'], (data) => {
+    backendUrlInput.value = data.backendUrl || 'https://cardscanner-nine.vercel.app';
+    if (data.geminiApiKey) geminiApiKeyInput.value = data.geminiApiKey;
+    if (data.hotkey) hotkeySelect.value = data.hotkey;
+    if (data.currency) currencySelect.value = data.currency;
   });
 
-  // Save config
-  btnSave.addEventListener('click', async () => {
-    const config = {
-      backendUrl: inpBackendUrl.value.trim() || 'http://localhost:3001',
-      hotkey: selHotkey.value || 's',
-      currency: selCurrency.value || 'EUR'
-    };
+  // 2. Save settings
+  btnSave.addEventListener('click', () => {
+    const backendUrl = backendUrlInput.value.trim().replace(/\/+$/, '');
+    const geminiApiKey = geminiApiKeyInput.value.trim();
+    const hotkey = hotkeySelect.value;
+    const currency = currencySelect.value;
 
-    chrome.runtime.sendMessage({ action: 'SET_CONFIG', config }, (res) => {
-      if (res && res.success) {
-        statusDot.className = 'status-indicator';
-        statusText.textContent = 'Gespeichert!';
-        setTimeout(() => {
-          statusText.textContent = 'Bereit';
-        }, 2000);
-      } else {
-        statusDot.className = 'status-indicator error';
-        statusText.textContent = 'Fehler beim Speichern';
-      }
+    chrome.storage.local.set({
+      backendUrl: backendUrl,
+      geminiApiKey: geminiApiKey,
+      hotkey: hotkey,
+      currency: currency
+    }, () => {
+      showStatus('success', 'Einstellungen erfolgreich gespeichert!');
+      setTimeout(() => {
+        showStatus('ready', 'Bereit für Whatnot Livestreams');
+      }, 2000);
     });
   });
 
-  // Test backend connection
+  // 3. Test backend connection
   btnTest.addEventListener('click', async () => {
-    const url = (inpBackendUrl.value.trim() || 'http://localhost:3001').replace(/\/+$/, '');
-    statusText.textContent = 'Verbindung wird geprüft...';
-    statusDot.className = 'status-indicator';
+    const rawUrl = backendUrlInput.value.trim().replace(/\/+$/, '');
+    if (!rawUrl) {
+      showStatus('error', 'Bitte Backend-URL eingeben');
+      return;
+    }
+
+    showStatus('loading', 'Prüfe Verbindung...');
 
     try {
-      const resp = await fetch(`${url}/api/health`);
-      if (resp.ok) {
-        const data = await resp.json();
-        statusDot.className = 'status-indicator';
-        statusText.textContent = `Verbunden! (${data.service || 'Backend OK'})`;
+      const res = await fetch(`${rawUrl}/api/health`, {
+        method: 'GET',
+        headers: { 'Accept': 'application/json' }
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        showStatus('success', `Verbunden! (${data.service || 'Card Scanner+ API'})`);
       } else {
-        statusDot.className = 'status-indicator error';
-        statusText.textContent = `HTTP Fehler: ${resp.status}`;
+        showStatus('error', `Server antwortete mit Code ${res.status}`);
       }
     } catch (err) {
-      statusDot.className = 'status-indicator error';
-      statusText.textContent = 'Keine Verbindung zum Backend';
+      showStatus('error', `Verbindungsfehler: ${err.message}`);
     }
   });
+
+  function showStatus(type, message) {
+    statusBox.className = 'status-box';
+    statusDot.className = 'status-indicator';
+
+    if (type === 'success') {
+      statusBox.classList.add('status-success');
+      statusDot.classList.add('status-dot-success');
+    } else if (type === 'error') {
+      statusBox.classList.add('status-error');
+      statusDot.classList.add('status-dot-error');
+    } else if (type === 'loading') {
+      statusBox.classList.add('status-loading');
+      statusDot.classList.add('status-dot-loading');
+    }
+
+    statusText.innerText = message;
+  }
 });

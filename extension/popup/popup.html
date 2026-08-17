@@ -13,7 +13,7 @@
         <img src="../icons/icon-48.png" alt="Logo" class="logo" />
         <div>
           <h1>Card Scanner+</h1>
-          <span class="badge-v3">Whatnot Edition</span>
+          <span class="badge-v3">AI Vision Edition</span>
         </div>
       </div>
     </header>
@@ -21,8 +21,14 @@
     <main class="popup-body">
       <div class="form-group">
         <label for="backendUrl">Backend API Server (Vercel / Local)</label>
-        <input type="text" id="backendUrl" placeholder="http://localhost:3001 oder https://...vercel.app" />
-        <small>URL zu deinem Vercel Serverless Backend oder lokalen Server</small>
+        <input type="text" id="backendUrl" placeholder="https://cardscanner-nine.vercel.app" />
+        <small>URL zu deinem Vercel Serverless Backend</small>
+      </div>
+
+      <div class="form-group">
+        <label for="geminiApiKey">Gemini Vision API Key (Optional)</label>
+        <input type="password" id="geminiApiKey" placeholder="AIzaSy... (oder in Vercel hinterlegen)" />
+        <small>Für blitzschnelle multimodale Kartenerkennung</small>
       </div>
 
       <div class="form-row">

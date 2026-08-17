@@ -1,31 +1,26 @@
 /**
  * Card Scanner+ Content Script (Master Orchestrator)
- * Multi-Scale Resolution Enhancer & Precision Card Grabber
+ * Multimodal AI Frame Capture & Whatnot Stream Live Search
  */
 
 (function () {
-  console.log('[Card Scanner+] Content Script active.');
+  console.log('[Card Scanner+] Content Script with AI Vision loaded.');
 
   let backendUrl = 'http://localhost:3001';
   let hotkeyChar = 's';
+  let geminiApiKey = '';
   let isCapturing = false;
 
-  // 1. Load config
+  // 1. Fetch user configuration
   chrome.runtime.sendMessage({ action: 'GET_CONFIG' }, (resp) => {
     if (resp && resp.success && resp.config) {
       if (resp.config.backendUrl) backendUrl = resp.config.backendUrl.replace(/\/+$/, '');
       if (resp.config.hotkey) hotkeyChar = resp.config.hotkey.toLowerCase();
+      if (resp.config.geminiApiKey) geminiApiKey = resp.config.geminiApiKey.trim();
     }
   });
 
-  // 2. Pre-warm OCR Engine
-  if (window.cardScannerOCR) {
-    window.cardScannerOCR.init().catch(err => {
-      console.warn('[Card Scanner+] OCR Pre-warm warning:', err);
-    });
-  }
-
-  // 3. Locate Video Stream
+  // 2. Locate Active Whatnot Video Stream
   function findWhatnotVideoStream() {
     const videos = Array.from(document.querySelectorAll('video'));
     if (videos.length === 0) return null;
@@ -39,7 +34,7 @@
     return videos[0];
   }
 
-  // 4. Scrape Whatnot Active Auction / Pinned Item Text
+  // 3. Scrape Whatnot Active Auction / Pinned Item Text
   function getWhatnotLiveAuctionHint() {
     try {
       const selectors = [
@@ -70,7 +65,7 @@
     return null;
   }
 
-  // 5. Hotkey Listener with Chat-Guard
+  // 4. Hotkey Listener with Chat-Guard
   window.addEventListener('keydown', (e) => {
     const activeEl = document.activeElement;
     const isInputActive = activeEl && (
@@ -85,14 +80,14 @@
 
     if (e.key && e.key.toLowerCase() === hotkeyChar.toLowerCase()) {
       e.preventDefault();
-      console.log(`[Card Scanner+] Hotkey '${e.key}' pressed.`);
-      performCapture();
+      console.log(`[Card Scanner+] Hotkey '${e.key}' triggered AI card capture.`);
+      performAICapture();
     }
   }, true);
 
   if (window.cardScannerOverlay) {
     window.cardScannerOverlay.onCaptureClick = () => {
-      performCapture();
+      performAICapture();
     };
 
     window.cardScannerOverlay.onManualSearch = (query) => {
@@ -101,9 +96,9 @@
   }
 
   /**
-   * Multi-Scale Frame Capture & OCR
+   * Captures High-Resolution Card Frame & Identifies with Gemini AI
    */
-  async function performCapture() {
+  async function performAICapture() {
     if (isCapturing) return;
     isCapturing = true;
 
@@ -114,57 +109,32 @@
     try {
       const video = findWhatnotVideoStream();
       const auctionHint = getWhatnotLiveAuctionHint();
-      console.log('[Card Scanner+] Whatnot Auction Context:', auctionHint);
+      console.log('[Card Scanner+] Whatnot Context:', auctionHint);
 
-      let crops = null;
+      let imageBase64 = null;
 
+      // Direct Canvas Frame Grab
       if (video) {
         try {
-          crops = grabMultiScaleCrops(video);
+          imageBase64 = grabHighResCardSnapshot(video);
         } catch (err) {
-          console.warn('[Card Scanner+] Direct canvas tainted. Trying fallback...', err);
+          console.warn('[Card Scanner+] Direct canvas capture failed. Trying fallback...', err);
         }
       }
 
-      if (!crops) {
-        crops = await grabMultiScaleFallback(video);
+      // Background Tab Screen Capture Fallback
+      if (!imageBase64) {
+        imageBase64 = await grabHighResFallback(video);
       }
 
-      if (!crops && !auctionHint) {
+      if (!imageBase64 && !auctionHint) {
         throw new Error('Kein Videobild verfügbar.');
       }
 
-      let detectedResult = null;
+      console.log('[Card Scanner+] Sending High-Res Card Image to AI Vision Backend...');
 
-      // 1. Scan the Upscaled Lower Card Region (where modern & vintage set numbers live)
-      if (crops && crops.lowerCard) {
-        const resLower = await window.cardScannerOCR.recognize(crops.lowerCard);
-        if (resLower && resLower.parsed) {
-          detectedResult = resLower.parsed;
-        }
-      }
-
-      // 2. Scan the High-Contrast Bottom Strip
-      if (!detectedResult && crops && crops.bottomStrip) {
-        const resStrip = await window.cardScannerOCR.recognize(crops.bottomStrip);
-        if (resStrip && resStrip.parsed) {
-          detectedResult = resStrip.parsed;
-        }
-      }
-
-      // 3. Scan the Top Header (for Vintage HP/Level)
-      if (!detectedResult && crops && crops.topHeader) {
-        const resTop = await window.cardScannerOCR.recognize(crops.topHeader);
-        if (resTop && resTop.parsed) {
-          detectedResult = resTop.parsed;
-        }
-      }
-
-      const capturedThumb = crops && crops.preview ? crops.preview.toDataURL('image/jpeg', 0.8) : null;
-
-      console.log('[Card Scanner+] Scan Completed:', { detectedResult, auctionHint });
-
-      await queryBackendCandidates(detectedResult, auctionHint, capturedThumb);
+      // Query AI Backend
+      await queryAIBackend(imageBase64, auctionHint);
     } catch (err) {
       console.error('[Card Scanner+] Capture error:', err);
       if (window.cardScannerOverlay) {
@@ -176,63 +146,32 @@
   }
 
   /**
-   * Upscaled (2.5x) Multi-Region Canvas Creator
+   * Cuts High-Resolution Card Frame (Center 75% of Stream)
    */
-  function grabMultiScaleCrops(video) {
+  function grabHighResCardSnapshot(video) {
     const vW = video.videoWidth || video.clientWidth || 720;
     const vH = video.videoHeight || video.clientHeight || 1280;
-    const scale = 2.5;
 
-    // Preview Frame
-    const preview = document.createElement('canvas');
-    preview.width = Math.floor(vW * 0.70);
-    preview.height = Math.floor(vH * 0.65);
-    const ctxPrev = preview.getContext('2d');
-    ctxPrev.drawImage(video, Math.floor(vW * 0.15), Math.floor(vH * 0.18), preview.width, preview.height, 0, 0, preview.width, preview.height);
+    const cardX = Math.floor(vW * 0.10);
+    const cardY = Math.floor(vH * 0.15);
+    const cardW = Math.floor(vW * 0.80);
+    const cardH = Math.floor(vH * 0.70);
 
-    // 1. Lower Card Area (Y: 45% -> 85%, X: 10% -> 90%) - Upscaled 2.5x
-    const srcW1 = Math.floor(vW * 0.80);
-    const srcH1 = Math.floor(vH * 0.40);
-    const lowerCard = document.createElement('canvas');
-    lowerCard.width = Math.floor(srcW1 * scale);
-    lowerCard.height = Math.floor(srcH1 * scale);
-    const ctx1 = lowerCard.getContext('2d', { willReadFrequently: true });
-    ctx1.imageSmoothingEnabled = true;
-    ctx1.imageSmoothingQuality = 'high';
-    ctx1.drawImage(video, Math.floor(vW * 0.10), Math.floor(vH * 0.45), srcW1, srcH1, 0, 0, lowerCard.width, lowerCard.height);
-    enhanceContrast(ctx1, lowerCard.width, lowerCard.height);
+    const canvas = document.createElement('canvas');
+    canvas.width = cardW;
+    canvas.height = cardH;
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(video, cardX, cardY, cardW, cardH, 0, 0, cardW, cardH);
 
-    // 2. High-Contrast Bottom Strip (Y: 65% -> 85%) - Upscaled 2.5x
-    const srcW2 = Math.floor(vW * 0.80);
-    const srcH2 = Math.floor(vH * 0.20);
-    const bottomStrip = document.createElement('canvas');
-    bottomStrip.width = Math.floor(srcW2 * scale);
-    bottomStrip.height = Math.floor(srcH2 * scale);
-    const ctx2 = bottomStrip.getContext('2d', { willReadFrequently: true });
-    ctx2.imageSmoothingEnabled = true;
-    ctx2.imageSmoothingQuality = 'high';
-    ctx2.drawImage(video, Math.floor(vW * 0.10), Math.floor(vH * 0.65), srcW2, srcH2, 0, 0, bottomStrip.width, bottomStrip.height);
-    enhanceContrast(ctx2, bottomStrip.width, bottomStrip.height);
-
-    // 3. Top Header (Y: 16% -> 32%) - Upscaled 2.5x
-    const srcW3 = Math.floor(vW * 0.80);
-    const srcH3 = Math.floor(vH * 0.16);
-    const topHeader = document.createElement('canvas');
-    topHeader.width = Math.floor(srcW3 * scale);
-    topHeader.height = Math.floor(srcH3 * scale);
-    const ctx3 = topHeader.getContext('2d', { willReadFrequently: true });
-    ctx3.imageSmoothingEnabled = true;
-    ctx3.imageSmoothingQuality = 'high';
-    ctx3.drawImage(video, Math.floor(vW * 0.10), Math.floor(vH * 0.16), srcW3, srcH3, 0, 0, topHeader.width, topHeader.height);
-    enhanceContrast(ctx3, topHeader.width, topHeader.height);
-
-    return { preview, lowerCard, bottomStrip, topHeader };
+    return canvas.toDataURL('image/jpeg', 0.88);
   }
 
   /**
-   * Screen Capture Fallback with 2.5x Upscaling
+   * Fallback Screen Capture for CORS/MSE Tainted Streams
    */
-  async function grabMultiScaleFallback(video) {
+  async function grabHighResFallback(video) {
     return new Promise((resolve) => {
       chrome.runtime.sendMessage({ action: 'CAPTURE_TAB_FRAME' }, (response) => {
         if (!response || !response.success || !response.dataUrl) {
@@ -248,42 +187,19 @@
           const vH = rect.height * dpr;
           const vLeft = rect.left * dpr;
           const vTop = rect.top * dpr;
-          const scale = 2.5;
 
-          const preview = document.createElement('canvas');
-          preview.width = Math.floor(vW * 0.70);
-          preview.height = Math.floor(vH * 0.65);
-          const ctxPrev = preview.getContext('2d');
-          ctxPrev.drawImage(img, Math.floor(vLeft + vW * 0.15), Math.floor(vTop + vH * 0.18), preview.width, preview.height, 0, 0, preview.width, preview.height);
+          const cardX = Math.round(vLeft + vW * 0.10);
+          const cardY = Math.round(vTop + vH * 0.15);
+          const cardW = Math.round(vW * 0.80);
+          const cardH = Math.round(vH * 0.70);
 
-          const srcW1 = Math.floor(vW * 0.80);
-          const srcH1 = Math.floor(vH * 0.40);
-          const lowerCard = document.createElement('canvas');
-          lowerCard.width = Math.floor(srcW1 * scale);
-          lowerCard.height = Math.floor(srcH1 * scale);
-          const ctx1 = lowerCard.getContext('2d', { willReadFrequently: true });
-          ctx1.drawImage(img, Math.floor(vLeft + vW * 0.10), Math.floor(vTop + vH * 0.45), srcW1, srcH1, 0, 0, lowerCard.width, lowerCard.height);
-          enhanceContrast(ctx1, lowerCard.width, lowerCard.height);
+          const canvas = document.createElement('canvas');
+          canvas.width = cardW;
+          canvas.height = cardH;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, cardX, cardY, cardW, cardH, 0, 0, cardW, cardH);
 
-          const srcW2 = Math.floor(vW * 0.80);
-          const srcH2 = Math.floor(vH * 0.20);
-          const bottomStrip = document.createElement('canvas');
-          bottomStrip.width = Math.floor(srcW2 * scale);
-          bottomStrip.height = Math.floor(srcH2 * scale);
-          const ctx2 = bottomStrip.getContext('2d', { willReadFrequently: true });
-          ctx2.drawImage(img, Math.floor(vLeft + vW * 0.10), Math.floor(vTop + vH * 0.65), srcW2, srcH2, 0, 0, bottomStrip.width, bottomStrip.height);
-          enhanceContrast(ctx2, bottomStrip.width, bottomStrip.height);
-
-          const srcW3 = Math.floor(vW * 0.80);
-          const srcH3 = Math.floor(vH * 0.16);
-          const topHeader = document.createElement('canvas');
-          topHeader.width = Math.floor(srcW3 * scale);
-          topHeader.height = Math.floor(srcH3 * scale);
-          const ctx3 = topHeader.getContext('2d', { willReadFrequently: true });
-          ctx3.drawImage(img, Math.floor(vLeft + vW * 0.10), Math.floor(vTop + vH * 0.16), srcW3, srcH3, 0, 0, topHeader.width, topHeader.height);
-          enhanceContrast(ctx3, topHeader.width, topHeader.height);
-
-          resolve({ preview, lowerCard, bottomStrip, topHeader });
+          resolve(canvas.toDataURL('image/jpeg', 0.88));
         };
         img.onerror = () => resolve(null);
         img.src = response.dataUrl;
@@ -292,42 +208,18 @@
   }
 
   /**
-   * Preprocessing: Grayscale & Contrast Boosting
+   * Sends Image to Vercel Gemini Vision Backend
    */
-  function enhanceContrast(ctx, w, h) {
-    try {
-      const imgData = ctx.getImageData(0, 0, w, h);
-      const d = imgData.data;
-      for (let i = 0; i < d.length; i += 4) {
-        const gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-        // Contrast stretching
-        const enhanced = gray > 130 ? Math.min(255, gray * 1.2) : Math.max(0, gray * 0.7);
-        d[i] = enhanced;
-        d[i + 1] = enhanced;
-        d[i + 2] = enhanced;
-      }
-      ctx.putImageData(imgData, 0, 0);
-    } catch (e) {}
-  }
-
-  /**
-   * Queries Backend API with Clean Card Codes
-   */
-  async function queryBackendCandidates(detected, auctionHint, capturedThumbnail) {
+  async function queryAIBackend(imageBase64, auctionHint) {
     try {
       const endpoint = `${backendUrl}/api/search-candidates`;
       const payload = {
-        number: detected ? detected.number : '',
-        total: detected ? detected.total : '',
-        promoCode: detected ? detected.promoCode : '',
-        setCode: detected ? detected.setCode : '',
-        code: detected ? detected.code : '',
-        artist: detected ? detected.artist : '',
-        hp: detected ? detected.hp : '',
+        imageBase64: imageBase64,
+        customApiKey: geminiApiKey,
         auctionHint: auctionHint || ''
       };
 
-      console.log(`[Card Scanner+] Fetching from ${endpoint}:`, payload);
+      console.log(`[Card Scanner+] Fetching from ${endpoint}...`);
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -339,20 +231,23 @@
       }
 
       const data = await res.json();
-      console.log('[Card Scanner+] Backend candidates response:', data);
+      console.log('[Card Scanner+] AI Backend response:', data);
+
+      const firstCand = data.candidates?.[0];
+      const detectedTitle = firstCand ? `${firstCand.name} (${firstCand.number || firstCand.set_name || ''})` : null;
 
       if (window.cardScannerOverlay) {
         window.cardScannerOverlay.showCandidates(data.candidates || [], 0, {
-          detectedCode: detected ? detected.code : null,
-          capturedThumbnail: capturedThumbnail
+          detectedCode: detectedTitle,
+          capturedThumbnail: imageBase64
         });
       }
     } catch (err) {
       console.error('[Card Scanner+] Backend API request failed:', err);
       if (window.cardScannerOverlay) {
         window.cardScannerOverlay.showCandidates([], 0, {
-          detectedCode: detected ? detected.code : null,
-          capturedThumbnail: capturedThumbnail
+          detectedCode: null,
+          capturedThumbnail: imageBase64
         });
       }
     }
@@ -370,7 +265,7 @@
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: query })
+        body: JSON.stringify({ query: query, customApiKey: geminiApiKey })
       });
 
       if (res.ok) {

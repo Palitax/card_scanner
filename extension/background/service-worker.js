@@ -4,18 +4,18 @@
  */
 
 const DEFAULT_CONFIG = {
-  backendUrl: 'http://localhost:3001',
+  backendUrl: 'https://cardscanner-nine.vercel.app',
   hotkey: 's',
   currency: 'EUR',
-  autoScan: false,
-  cropRegion: 'bottom_half' // 'bottom_third', 'bottom_half', 'center', 'full'
+  geminiApiKey: '',
+  autoScan: false
 };
 
 // Initialize default settings on extension installation
 chrome.runtime.onInstalled.addListener(async () => {
-  const current = await chrome.storage.local.get('config');
-  if (!current.config) {
-    await chrome.storage.local.set({ config: DEFAULT_CONFIG });
+  const current = await chrome.storage.local.get(['backendUrl', 'hotkey', 'currency', 'geminiApiKey']);
+  if (!current.backendUrl) {
+    await chrome.storage.local.set(DEFAULT_CONFIG);
     console.log('[Card Scanner+] Initialized default configuration.');
   }
 });
@@ -26,7 +26,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   switch (message.action) {
     case 'CAPTURE_TAB_FRAME': {
-      // Pipeline B Fallback: Capture screen pixels directly via Chrome API
       (async () => {
         try {
           const windowId = sender.tab ? sender.tab.windowId : undefined;
@@ -37,14 +36,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           sendResponse({ success: false, error: err.message });
         }
       })();
-      return true; // Keep message channel open for async response
+      return true;
     }
 
     case 'GET_CONFIG': {
       (async () => {
         try {
-          const { config = DEFAULT_CONFIG } = await chrome.storage.local.get('config');
-          sendResponse({ success: true, config: { ...DEFAULT_CONFIG, ...config } });
+          const stored = await chrome.storage.local.get(['backendUrl', 'hotkey', 'currency', 'geminiApiKey']);
+          sendResponse({ success: true, config: { ...DEFAULT_CONFIG, ...stored } });
         } catch (err) {
           sendResponse({ success: false, config: DEFAULT_CONFIG });
         }
@@ -55,25 +54,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     case 'SET_CONFIG': {
       (async () => {
         try {
-          const { config: existing = DEFAULT_CONFIG } = await chrome.storage.local.get('config');
-          const updated = { ...existing, ...message.config };
-          await chrome.storage.local.set({ config: updated });
-          sendResponse({ success: true, config: updated });
-        } catch (err) {
-          sendResponse({ success: false, error: err.message });
-        }
-      })();
-      return true;
-    }
-
-    case 'FETCH_API': {
-      // Optional Proxy fetch in background if content script faces CORS restrictions
-      (async () => {
-        try {
-          const { url, options } = message;
-          const response = await fetch(url, options);
-          const data = await response.json();
-          sendResponse({ success: response.ok, status: response.status, data });
+          await chrome.storage.local.set(message.config);
+          sendResponse({ success: true, config: message.config });
         } catch (err) {
           sendResponse({ success: false, error: err.message });
         }
